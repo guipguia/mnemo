@@ -8,7 +8,10 @@ Audit logs are raw and noisy. GitOps only covers what lives in Git. mnemo watche
 resources across all your clusters, keeps every version, and answers *"what changed in the
 last 30 minutes, and who did it?"*, flagging manual changes that bypassed GitOps.
 
-<!-- TODO: demo GIF of the "broken ConfigMap" incident -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/demo-dark.gif">
+  <img alt="mnemo finding the hand-edit behind an incident: the change feed, drift filter, the diff of PAYMENT_TIMEOUT from 30s to 3s by kubectl-patch, the ConfigMap as it was before, and the Deployment's attributed history" src="docs/demo-light.gif">
+</picture>
 
 **Why mnemo:** open source, self-hosted, your data never leaves your infrastructure, and you
 can reconstruct any object at any point in time, not just get notified that it changed.
@@ -60,6 +63,9 @@ history. All options: [charts/mnemo/values.yaml](charts/mnemo/values.yaml).
 
 History lives in SQLite on a PersistentVolume (block storage, not NFS), kept on
 `helm uninstall`.
+
+**Try it:** [`demo/incident.sh`](demo/incident.sh) replays the incident from the GIF on any
+cluster mnemo watches: an Argo CD-managed app, then someone hot-fixing it by hand.
 
 ## How it works
 

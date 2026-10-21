@@ -14,8 +14,7 @@ Design details: [docs/design.md](docs/design.md).
 - [x] UI: change feed home screen, per-object timeline, diff view
 - [x] Read-only ClusterRole generated from config, documented
 - [x] Helm chart (PVC and token kept on uninstall), container image
-- [ ] kind-based multi-cluster demo
-- [ ] Scripted "broken ConfigMap" incident demo + README GIF
+- [x] Scripted "broken ConfigMap" incident demo + README GIF, recorded on two kind clusters
 
 ## v0.2: who and why
 - [ ] Audit webhook receiver in the agent for user attribution
