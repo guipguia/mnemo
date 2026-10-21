@@ -5,3 +5,4 @@ node_modules/
 .env
 ui/dist/*
 !ui/dist/.gitkeep
+demo/node_modules/
