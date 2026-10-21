@@ -28,7 +28,6 @@ import (
 	"github.com/guipguia/mnemo/internal/auth"
 	"github.com/guipguia/mnemo/internal/hub"
 	"github.com/guipguia/mnemo/internal/store"
-	"github.com/guipguia/mnemo/ui"
 )
 
 // version is set at release build time: -ldflags "-X main.version=v0.1.0".
@@ -132,21 +131,7 @@ func run(ctx context.Context, mode string, args []string) error {
 
 	errc := make(chan error, 2)
 	if st != nil {
-		api := hub.Handler(st, *token, au.Access)
-		mux := http.NewServeMux()
-		mux.Handle("/api/v1/ingest", api) // agents: hub token, not SSO
-		mux.Handle("/api/v1/checkpoints", api)
-		mux.Handle("/api/", au.Require(api))
-		mux.Handle("/auth/", au.Routes())
-		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-			if err := st.Ping(r.Context()); err != nil {
-				http.Error(w, err.Error(), http.StatusServiceUnavailable)
-				return
-			}
-			fmt.Fprintln(w, "ok")
-		})
-		mux.Handle("/", au.Require(ui.Handler()))
-		srv := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+		srv := &http.Server{Addr: *listen, Handler: routes(st, *token, au), ReadHeaderTimeout: 10 * time.Second}
 		go func() { errc <- srv.ListenAndServe() }()
 		go func() {
 			<-ctx.Done()
