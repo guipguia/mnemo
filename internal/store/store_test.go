@@ -45,7 +45,7 @@ func TestStore(t *testing.T) {
 		t.Fatalf("paths = %v, want %v", c.Paths, want)
 	}
 	record(3, "", false, true, Deleted)
-	record(4, "", false, false, "") // deleting twice is a no-op
+	record(4, "", false, false, "")                         // deleting twice is a no-op
 	record(5, `{"spec":{"replicas":1}}`, true, true, Added) // re-created while offline: not a baseline
 
 	if _, err := s.At(ctx, ref, at(-1)); !errors.Is(err, ErrNotFound) {
@@ -85,5 +85,53 @@ func TestStore(t *testing.T) {
 	got, err := s.Get(ctx, hist[0].ID)
 	if err != nil || string(got.Object) != `{"spec":{"replicas":1}}` {
 		t.Fatalf("get latest: %s, %v", got.Object, err)
+	}
+}
+
+func TestClustersCheckpointsPrune(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if err := s.RegisterCluster(ctx, "prod", "uid-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegisterCluster(ctx, "prod", "uid-1"); err != nil {
+		t.Fatalf("re-register same cluster: %v", err)
+	}
+	if err := s.RegisterCluster(ctx, "prod", "uid-2"); !errors.Is(err, ErrClusterConflict) {
+		t.Fatalf("name reuse: err = %v, want ErrClusterConflict", err)
+	}
+
+	if err := s.SetCheckpoint(ctx, "prod", "apps/v1/deployments", "10"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetCheckpoint(ctx, "prod", "apps/v1/deployments", "20"); err != nil {
+		t.Fatal(err)
+	}
+	if cp, err := s.Checkpoints(ctx, "prod"); err != nil || cp["apps/v1/deployments"] != "20" {
+		t.Fatalf("checkpoints = %v, %v", cp, err)
+	}
+
+	now := time.Now()
+	for _, name := range []string{"a", "b", "c"} {
+		c := &Change{Ref: Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: "ns", Name: name}, Time: now, Object: []byte(`{}`), Drift: name == "a"}
+		if _, err := s.Record(ctx, c, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := s.Prune(ctx, "prod", "", "ConfigMap", map[string]bool{"ns/a": true}, now.Add(time.Minute))
+	if err != nil || n != 2 {
+		t.Fatalf("prune = %d, %v; want 2", n, err)
+	}
+	if n, _ := s.Prune(ctx, "prod", "", "ConfigMap", map[string]bool{"ns/a": true}, now.Add(time.Minute)); n != 0 {
+		t.Fatalf("second prune = %d, want 0", n)
+	}
+	drift, err := s.Changes(ctx, Filter{DriftOnly: true})
+	if err != nil || len(drift) != 1 || drift[0].Name != "a" {
+		t.Fatalf("drift feed = %v, %v", drift, err)
 	}
 }

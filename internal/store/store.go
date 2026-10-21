@@ -33,18 +33,34 @@ CREATE TABLE IF NOT EXISTS changes (
 	type             TEXT    NOT NULL,
 	author           TEXT    NOT NULL,
 	source           TEXT    NOT NULL,
+	drift            INTEGER NOT NULL DEFAULT 0,
 	paths            TEXT,
 	object           BLOB
 );
 CREATE INDEX IF NOT EXISTS changes_cluster_ts   ON changes (cluster, ts);
 CREATE INDEX IF NOT EXISTS changes_namespace_ts ON changes (cluster, namespace, ts);
 CREATE INDEX IF NOT EXISTS changes_object       ON changes (cluster, api_group, kind, namespace, name, ts);
+CREATE TABLE IF NOT EXISTS clusters (
+	name      TEXT PRIMARY KEY,
+	uid       TEXT    NOT NULL,
+	last_seen INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS checkpoints (
+	cluster          TEXT NOT NULL,
+	resource         TEXT NOT NULL,
+	resource_version TEXT NOT NULL,
+	PRIMARY KEY (cluster, resource)
+);
 `
 
-const cols = `id, cluster, api_group, version, kind, namespace, name, uid, resource_version, ts, type, author, source, paths`
+const cols = `id, cluster, api_group, version, kind, namespace, name, uid, resource_version, ts, type, author, source, drift, paths`
 
-// ErrNotFound means the object did not exist at the requested time.
-var ErrNotFound = errors.New("not found")
+var (
+	// ErrNotFound means the object did not exist at the requested time.
+	ErrNotFound = errors.New("not found")
+	// ErrClusterConflict means a cluster name is already registered with a different UID.
+	ErrClusterConflict = errors.New("cluster name already registered with a different UID")
+)
 
 type Type string
 
@@ -57,19 +73,26 @@ const (
 
 // Ref identifies an object by name, not UID: a delete and re-create is one history.
 type Ref struct {
-	Cluster, Group, Kind, Namespace, Name string
+	Cluster   string `json:"cluster"`
+	Group     string `json:"group"`
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
 }
 
 type Change struct {
-	ID int64
+	ID int64 `json:"id"`
 	Ref
-	Version, UID, ResourceVersion string
-	Time                          time.Time
-	Type                          Type
-	Author                        string          // field manager, or user when audit attribution is available
-	Source                        string          // gitops | controller | manual | unknown
-	Paths                         []string        // JSON pointers changed since the previous version (Modified only)
-	Object                        json.RawMessage // normalized object; nil when Deleted or not loaded
+	Version         string          `json:"version"`
+	UID             string          `json:"uid"`
+	ResourceVersion string          `json:"resourceVersion"`
+	Time            time.Time       `json:"time"`
+	Type            Type            `json:"type"`
+	Author          string          `json:"author"`           // field manager, or user when audit attribution is available
+	Source          string          `json:"source"`           // gitops | controller | manual | unknown
+	Drift           bool            `json:"drift"`            // manual change to a GitOps-managed object
+	Paths           []string        `json:"paths,omitempty"`  // JSON pointers changed since the previous version (Modified only)
+	Object          json.RawMessage `json:"object,omitempty"` // normalized object; nil when Deleted or not loaded
 }
 
 type Store struct{ db *sql.DB }
@@ -148,9 +171,9 @@ func (s *Store) Record(ctx context.Context, c *Change, listed bool) (bool, error
 		object = []byte(c.Object)
 	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO changes (`+cols[len("id, "):]+`, object)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.Cluster, c.Group, c.Version, c.Kind, c.Namespace, c.Name, c.UID, c.ResourceVersion,
-		c.Time.UnixNano(), string(c.Type), c.Author, c.Source, paths, object)
+		c.Time.UnixNano(), string(c.Type), c.Author, c.Source, c.Drift, paths, object)
 	if err != nil {
 		return false, err
 	}
@@ -163,6 +186,7 @@ func (s *Store) Record(ctx context.Context, c *Change, listed bool) (bool, error
 // Filter narrows the change feed. Empty fields match everything.
 type Filter struct {
 	Cluster, Namespace, Kind, Author, Source string
+	DriftOnly                                bool
 	Since, Until                             time.Time // Since inclusive, Until exclusive
 	Limit                                    int       // default 100, max 1000
 }
@@ -181,6 +205,9 @@ func (s *Store) Changes(ctx context.Context, f Filter) ([]Change, error) {
 		if v != "" {
 			add(col+" = ?", v)
 		}
+	}
+	if f.DriftOnly {
+		add("drift = ?", true)
 	}
 	if !f.Since.IsZero() {
 		add("ts >= ?", f.Since.UnixNano())
@@ -231,6 +258,108 @@ func (s *Store) At(ctx context.Context, r Ref, t time.Time) (Change, error) {
 	return c, err
 }
 
+// Prune records a deletion for every live object of cluster/group/kind not in keep
+// (keyed "namespace/name"). Called after a relist to catch deletions missed while offline.
+func (s *Store) Prune(ctx context.Context, cluster, group, kind string, keep map[string]bool, t time.Time) (int, error) {
+	// Collect first: with one connection, Record can't run while rows are open.
+	rows, err := s.db.QueryContext(ctx, `SELECT namespace, name FROM changes c
+		WHERE cluster = ? AND api_group = ? AND kind = ? AND type != ?
+		AND id = (SELECT MAX(id) FROM changes
+			WHERE cluster = c.cluster AND api_group = c.api_group AND kind = c.kind
+			AND namespace = c.namespace AND name = c.name)`, cluster, group, kind, string(Deleted))
+	if err != nil {
+		return 0, err
+	}
+	var gone []Ref
+	for rows.Next() {
+		r := Ref{Cluster: cluster, Group: group, Kind: kind}
+		if err := rows.Scan(&r.Namespace, &r.Name); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if !keep[r.Namespace+"/"+r.Name] {
+			gone = append(gone, r)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, r := range gone {
+		if _, err := s.Record(ctx, &Change{Ref: r, Time: t, Source: "unknown"}, true); err != nil {
+			return 0, err
+		}
+	}
+	return len(gone), nil
+}
+
+// RegisterCluster records that an agent for cluster name (identified by uid) checked in.
+// It fails with ErrClusterConflict if another cluster already uses the name, so two
+// clusters can never mix their histories.
+func (s *Store) RegisterCluster(ctx context.Context, name, uid string) error {
+	var existing string
+	err := s.db.QueryRowContext(ctx, "SELECT uid FROM clusters WHERE name = ?", name).Scan(&existing)
+	if err == nil && existing != uid {
+		return ErrClusterConflict
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO clusters (name, uid, last_seen) VALUES (?, ?, ?)
+		ON CONFLICT (name) DO UPDATE SET last_seen = excluded.last_seen`, name, uid, time.Now().UnixNano())
+	return err
+}
+
+type Cluster struct {
+	Name     string    `json:"name"`
+	UID      string    `json:"uid"`
+	LastSeen time.Time `json:"lastSeen"`
+}
+
+func (s *Store) Clusters(ctx context.Context) ([]Cluster, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT name, uid, last_seen FROM clusters ORDER BY name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Cluster
+	for rows.Next() {
+		var c Cluster
+		var ts int64
+		if err := rows.Scan(&c.Name, &c.UID, &ts); err != nil {
+			return nil, err
+		}
+		c.LastSeen = time.Unix(0, ts).UTC()
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// Checkpoints returns the last resourceVersion stored per resource, so a restarted agent
+// resumes its watches without keeping local state.
+func (s *Store) Checkpoints(ctx context.Context, cluster string) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT resource, resource_version FROM checkpoints WHERE cluster = ?", cluster)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var res, rv string
+		if err := rows.Scan(&res, &rv); err != nil {
+			return nil, err
+		}
+		out[res] = rv
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SetCheckpoint(ctx context.Context, cluster, resource, rv string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO checkpoints (cluster, resource, resource_version) VALUES (?, ?, ?)
+		ON CONFLICT (cluster, resource) DO UPDATE SET resource_version = excluded.resource_version`, cluster, resource, rv)
+	return err
+}
+
 func (s *Store) list(ctx context.Context, q string, args ...any) ([]Change, error) {
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -254,7 +383,7 @@ func scan(row interface{ Scan(...any) error }, withObject bool) (Change, error) 
 	var paths sql.NullString
 	var object []byte
 	dest := []any{&c.ID, &c.Cluster, &c.Group, &c.Version, &c.Kind, &c.Namespace, &c.Name, &c.UID,
-		&c.ResourceVersion, &ts, &c.Type, &c.Author, &c.Source, &paths}
+		&c.ResourceVersion, &ts, &c.Type, &c.Author, &c.Source, &c.Drift, &paths}
 	if withObject {
 		dest = append(dest, &object)
 	}
