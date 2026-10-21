@@ -58,6 +58,8 @@ for its per-GVK resume `resourceVersion`, so the agent keeps no local state.
 
 - Raw dynamic watches per GVK with bookmarks, no informers: informers cache every object in
   memory, and the hub's last stored state is already the "before" side of each diff.
+- The agent sends normalized full objects; the **hub** dedupes, diffs, and stores. This keeps the
+  agent stateless and makes at-least-once delivery safe (a resent object is a no-op).
 - Resume from the checkpoint held by the hub.
 - `410 Gone` (hub or agent down past the etcd compaction window): relist, compare against the
   hub's latest state, record differences as *"changed while offline, author unknown"*.
@@ -108,12 +110,21 @@ revision) metadata where present.
 
 ## Storage
 
-**Model:** full snapshot every N changes + RFC 6902 JSON patches between.
-State at T = nearest snapshot ≤ T + replay patches.
+**Model (v0.1):** one row per change holding the full normalized object, plus the list of
+changed JSON pointers (e.g. `/spec/replicas`) for the feed. State at T = one indexed lookup.
+Unchanged objects are never stored, so size grows with real changes only.
+
+**Later, if storage size measurably matters:** full snapshot every N changes + RFC 6902
+JSON patches between; state at T = nearest snapshot ≤ T + replay patches.
+
+**Identity:** history is keyed by cluster + group + kind + namespace + name, not UID, so a
+delete and re-create is one timeline. Change types: `baseline` (first seen in a list),
+`added`, `modified`, `deleted` (tombstone).
 
 **Backends:** SQLite first, PostgreSQL and MySQL later.
 
-- Hub code talks to a small `Store` interface; the API/UI never see SQL.
+- Hub code goes through the `store` package; the API/UI never see SQL. The Go interface is
+  extracted when the second backend lands.
 - Plain `database/sql`, no ORM. Keep SQL portable: store objects/patches as text/blob,
   no backend-specific JSON operators in the hot path.
 - Migrations kept per dialect (`migrations/{sqlite,postgres,mysql}/`).
