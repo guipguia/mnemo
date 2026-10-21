@@ -26,7 +26,7 @@ Design details: [docs/design.md](docs/design.md).
 - [ ] Retention policy (age / count)
 - [ ] Litestream backup option in the chart
 - [ ] `kubectl mnemo` plugin
-- [ ] Release supply chain: cosign signatures, SBOM, SLSA provenance
+- [x] Release supply chain: cosign signatures, SBOM, SLSA provenance
 
 ## v0.3: production-ish
 - [ ] PostgreSQL backend (enables hub HA)
