@@ -1,0 +1,36 @@
+# Refuse to run any mnemo image that wasn't signed by mnemo's release workflow.
+# For Kyverno versions before ImageValidatingPolicy; on Kyverno 1.19+ use
+# kyverno-imagevalidatingpolicy.yaml instead (ClusterPolicy is deprecated there).
+# Tested with Kyverno 1.19.2 against the signed v0.1.0-rc.1 image.
+#
+# mnemo images are signed keylessly with cosign v3, which stores signatures as Sigstore
+# bundles (OCI referrers), hence type: SigstoreBundle.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-signed-mnemo
+  annotations:
+    policies.kyverno.io/title: Require signed mnemo images
+    policies.kyverno.io/description: >-
+      mnemo images must be signed by the release workflow of github.com/guipguia/mnemo,
+      from a version tag. Anything else, including a look-alike image, is refused.
+spec:
+  webhookConfiguration:
+    timeoutSeconds: 30
+  rules:
+    - name: mnemo-signed-by-release-workflow
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      verifyImages:
+        - imageReferences: ["ghcr.io/guipguia/mnemo*"]
+          type: SigstoreBundle
+          failureAction: Enforce
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: https://token.actions.githubusercontent.com
+                    subjectRegExp: ^https://github\.com/guipguia/mnemo/\.github/workflows/release\.yml@refs/tags/v.+$
+                    rekor:
+                      url: https://rekor.sigstore.dev

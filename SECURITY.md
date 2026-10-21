@@ -52,4 +52,19 @@ sha256sum --ignore-missing -c checksums.txt
 gh attestation verify mnemo_v0.1.0_linux_amd64.tar.gz --repo guipguia/mnemo
 ```
 
+### Enforcing it in your cluster
+
+Verifying by hand proves an image is ours once. To have your cluster refuse anything else,
+apply the Kyverno policy (Kyverno 1.19+):
+
+```sh
+kubectl apply -f https://raw.githubusercontent.com/guipguia/mnemo/main/deploy/policies/kyverno-imagevalidatingpolicy.yaml
+```
+
+Pods using `ghcr.io/guipguia/mnemo*` are then admitted only if the image was signed by this
+repository's release workflow from a version tag, and are pinned to the verified digest. For
+older Kyverno, use [`kyverno-clusterpolicy.yaml`](deploy/policies/kyverno-clusterpolicy.yaml).
+Both were tested on kind: the signed release image is admitted; an unsigned artifact and an
+image signed by a different identity are refused; other images are untouched.
+
 Images also carry an SBOM: `docker buildx imagetools inspect ghcr.io/guipguia/mnemo:v0.1.0 --format '{{ json .SBOM }}'`.

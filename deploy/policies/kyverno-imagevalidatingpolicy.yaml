@@ -1,0 +1,36 @@
+# Refuse to run any mnemo image that wasn't signed by mnemo's release workflow.
+# Kyverno 1.19+ (tested with 1.19.2 against the signed v0.1.0-rc.1 image).
+#
+#   kubectl apply -f https://raw.githubusercontent.com/guipguia/mnemo/main/deploy/policies/kyverno-imagevalidatingpolicy.yaml
+#
+# Only images matching ghcr.io/guipguia/mnemo* are checked; everything else is untouched.
+# Admitted pods are pinned to the verified digest, so a tag can't be swapped afterwards.
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: require-signed-mnemo
+spec:
+  validationActions: [Deny]
+  webhookConfiguration:
+    timeoutSeconds: 30
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  matchImageReferences:
+    - glob: ghcr.io/guipguia/mnemo*
+  attestors:
+    - name: release
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/guipguia/mnemo/\.github/workflows/release\.yml@refs/tags/v.+$
+        ctlog:
+          url: https://rekor.sigstore.dev
+  validations:
+    - expression: >-
+        images.containers.map(image, verifyImageSignatures(image, [attestors.release])).all(e, e > 0)
+      message: mnemo images must be signed by github.com/guipguia/mnemo's release workflow
