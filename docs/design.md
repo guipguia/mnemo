@@ -78,9 +78,18 @@ Configurable per GVK. Hash the normalized object and skip the write if unchanged
 
 ## Timestamps
 
-A watch event carries no time. Watch events use the time the agent observed them (seconds
-behind at most). Listed objects (baseline, offline catch-up) use their newest non-status
-`managedFields[].time`. Audit `stageTimestamp` replaces both once audit attribution exists.
+A watch event carries no time, so the agent stamps events when it processes them. That is
+seconds late normally, but minutes late for events held back while the hub was down. The hub
+corrects it from what Kubernetes recorded, moving times earlier, never later:
+
+- `added`: `metadata.creationTimestamp`.
+- `modified`: the `managedFields` time of the manager that owns the changed fields. `/scale`
+  entries have no time, so those keep the observed time.
+- `baseline` and offline catch-up (listed objects): newest non-status `managedFields` time.
+- `deleted`: observed time (deletes don't update `managedFields`).
+
+These have 1s precision, so a version is never stored with a time before the previous one.
+Audit `stageTimestamp` will replace all of this once audit attribution exists.
 
 ## The "who" problem
 

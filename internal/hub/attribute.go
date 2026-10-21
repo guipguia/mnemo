@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -44,23 +45,54 @@ func classify(manager string) string {
 // attribute sets c.Author, c.Source and c.Drift. A writer takes ownership of the fields it
 // changes, so the author of a modification is whoever owns the changed paths. Timestamps
 // alone can't do this: /scale entries have none, and they only have 1s precision.
+//
+// It also corrects c.Time, which the agent sets when it processes the event: events held
+// back during a hub outage would otherwise all get the time the hub came back.
 func attribute(c *store.Change, managers []metav1.ManagedFieldsEntry) {
 	if c.Object == nil {
 		c.Author, c.Source = "", "unknown" // a delete doesn't update managedFields
 		return
 	}
-	if c.Type == store.Modified {
-		c.Author = owner(c.Paths, managers)
+	meta := metadata(c.Object)
+	switch c.Type {
+	case store.Added:
+		useEarlier(c, meta.CreationTimestamp)
+	case store.Modified:
+		if m := owner(c.Paths, managers); m != nil {
+			c.Author = m.Manager
+			if m.Time != nil { // /scale entries have no time: keep the observed one
+				useEarlier(c, m.Time.Time)
+			}
+		}
 	}
 	if c.Author == "" { // created, baseline, or only removed fields (nobody owns them now)
 		c.Author = newest(managers)
 	}
 	c.Source = classify(c.Author)
-	c.Drift = c.Source == "manual" && gitopsManaged(c.Object, managers)
+	c.Drift = c.Source == "manual" && gitopsManaged(meta, managers)
 }
 
-// owner returns the manager owning the most changed paths, the newest on ties.
-func owner(paths []string, managers []metav1.ManagedFieldsEntry) string {
+// useEarlier moves c.Time back to when Kubernetes says the change happened, never forward:
+// a skewed API server clock must not put a change in the future.
+func useEarlier(c *store.Change, t time.Time) {
+	if !t.IsZero() && t.Before(c.Time) {
+		c.Time = t
+	}
+}
+
+type objectMeta struct {
+	Labels, Annotations map[string]string
+	CreationTimestamp   time.Time
+}
+
+func metadata(object []byte) objectMeta {
+	var o struct{ Metadata objectMeta }
+	json.Unmarshal(object, &o)
+	return o.Metadata
+}
+
+// owner returns the manager entry owning the most changed paths, the newest on ties.
+func owner(paths []string, managers []metav1.ManagedFieldsEntry) *metav1.ManagedFieldsEntry {
 	best, bestN := -1, 0
 	for i, m := range managers {
 		if m.Subresource == "status" || m.FieldsV1 == nil {
@@ -81,9 +113,9 @@ func owner(paths []string, managers []metav1.ManagedFieldsEntry) string {
 		}
 	}
 	if best < 0 {
-		return ""
+		return nil
 	}
-	return managers[best].Manager
+	return &managers[best]
 }
 
 // owns reports whether a fieldsV1 tree covers the path. List items are keyed by value
@@ -129,21 +161,17 @@ func newer(a, b metav1.ManagedFieldsEntry) bool {
 	return b.Time == nil || !a.Time.Before(b.Time)
 }
 
-func gitopsManaged(object []byte, managers []metav1.ManagedFieldsEntry) bool {
+func gitopsManaged(meta objectMeta, managers []metav1.ManagedFieldsEntry) bool {
 	for _, m := range managers {
 		if gitopsManagers[m.Manager] {
 			return true
 		}
 	}
-	var o struct {
-		Metadata struct{ Labels, Annotations map[string]string }
-	}
-	json.Unmarshal(object, &o)
 	for _, k := range gitopsMarkers {
-		if _, ok := o.Metadata.Labels[k]; ok {
+		if _, ok := meta.Labels[k]; ok {
 			return true
 		}
-		if _, ok := o.Metadata.Annotations[k]; ok {
+		if _, ok := meta.Annotations[k]; ok {
 			return true
 		}
 	}

@@ -193,3 +193,28 @@ func TestAccess(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordKeepsOrder(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ref := Ref{Cluster: "c", Kind: "ConfigMap", Namespace: "n", Name: "x"}
+	t0 := time.Date(2026, 10, 21, 14, 32, 10, 500_000_000, time.UTC)
+	if _, err := s.Record(ctx, &Change{Ref: ref, Time: t0, Object: []byte(`{"a":1}`)}, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	// A corrected time truncated to the second would sort before the previous version.
+	c := &Change{Ref: ref, Time: t0.Truncate(time.Second), Object: []byte(`{"a":2}`)}
+	if _, err := s.Record(ctx, c, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !c.Time.Equal(t0) {
+		t.Errorf("time = %v, want clamped to previous version's %v", c.Time, t0)
+	}
+	if got, _ := s.At(ctx, ref, t0); string(got.Object) != `{"a":2}` {
+		t.Errorf("state at t0 = %s, want the newer version", got.Object)
+	}
+}
