@@ -25,6 +25,7 @@ import (
 	"github.com/guipguia/mnemo/internal/agent"
 	"github.com/guipguia/mnemo/internal/hub"
 	"github.com/guipguia/mnemo/internal/store"
+	"github.com/guipguia/mnemo/ui"
 )
 
 func main() {
@@ -111,7 +112,10 @@ func run(ctx context.Context, mode string, args []string) error {
 
 	errc := make(chan error, 2)
 	if st != nil {
-		srv := &http.Server{Addr: *listen, Handler: hub.Handler(st, *token), ReadHeaderTimeout: 10 * time.Second}
+		mux := http.NewServeMux()
+		mux.Handle("/api/", hub.Handler(st, *token))
+		mux.Handle("/", ui.Handler())
+		srv := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		go func() { errc <- srv.ListenAndServe() }()
 		go func() {
 			<-ctx.Done()

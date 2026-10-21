@@ -3,15 +3,15 @@
 Design details: [docs/design.md](docs/design.md).
 
 ## v0.1: prove the idea
-- [ ] Single binary with `agent`, `hub`, and `all` modes
-- [ ] Agent: dynamic watches on configured GVKs, noise filtering, push normalized objects to hub (hub dedupes and diffs)
-- [ ] Multi-cluster: cluster identity, per-cluster resume checkpoints held by the hub
-- [ ] Storage: SQLite behind a `Store` interface, full-object rows + changed paths, tombstones
-- [ ] Initial sync baseline with last-modified info from `managedFields` (day-one value)
-- [ ] Attribution via `managedFields`; change `source` classification (gitops / controller / manual)
-- [ ] Drift flag: manual changes to GitOps-managed objects
-- [ ] API: cluster-wide change feed (primary), object history, object state at time T
-- [ ] UI: change feed home screen, per-object timeline, diff view
+- [x] Single binary with `agent`, `hub`, and `all` modes
+- [x] Agent: dynamic watches on configured GVKs, noise filtering, push normalized objects to hub (hub dedupes and diffs)
+- [x] Multi-cluster: cluster identity, per-cluster resume checkpoints held by the hub
+- [x] Storage: SQLite behind a `Store` interface, full-object rows + changed paths, tombstones
+- [x] Initial sync baseline with last-modified info from `managedFields` (day-one value)
+- [x] Attribution via `managedFields`; change `source` classification (gitops / controller / manual)
+- [x] Drift flag: manual changes to GitOps-managed objects
+- [x] API: cluster-wide change feed (primary), object history, object state at time T
+- [x] UI: change feed home screen, per-object timeline, diff view
 - [ ] Read-only ClusterRole generated from config, documented
 - [ ] Helm chart (PVC kept on uninstall), kind-based multi-cluster demo
 - [ ] Scripted "broken ConfigMap" incident demo + README GIF
