@@ -2,4 +2,4 @@
 
 | Name | GitHub | Affiliation |
 |------|--------|-------------|
-| TODO: your name | @guipguia | Independent |
+| Guilherme Guia | @guipguia | Independent |

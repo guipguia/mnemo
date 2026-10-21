@@ -4,9 +4,9 @@ Design details: [docs/design.md](docs/design.md).
 
 ## v0.1: prove the idea
 - [ ] Single binary with `agent`, `hub`, and `all` modes
-- [ ] Agent: dynamic watches on configured GVKs, noise filtering, diffing, push to hub
+- [ ] Agent: dynamic watches on configured GVKs, noise filtering, push normalized objects to hub (hub dedupes and diffs)
 - [ ] Multi-cluster: cluster identity, per-cluster resume checkpoints held by the hub
-- [ ] Storage: SQLite behind a `Store` interface, snapshots + JSON patches, tombstones
+- [ ] Storage: SQLite behind a `Store` interface, full-object rows + changed paths, tombstones
 - [ ] Initial sync baseline with last-modified info from `managedFields` (day-one value)
 - [ ] Attribution via `managedFields`; change `source` classification (gitops / controller / manual)
 - [ ] Drift flag: manual changes to GitOps-managed objects
