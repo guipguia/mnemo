@@ -119,9 +119,20 @@ func (a *Agent) watch(ctx context.Context, gvr schema.GroupVersionResource, rv s
 	}
 }
 
-// consume pushes watch events until the server closes the watch, returning the last resourceVersion.
+// consume pushes watch events until the server closes the watch or ctx is done, returning
+// the last resourceVersion.
 func (a *Agent) consume(ctx context.Context, gvr schema.GroupVersionResource, w watch.Interface, rv string) (string, error) {
-	for ev := range w.ResultChan() {
+	for {
+		var ev watch.Event
+		select {
+		case <-ctx.Done(): // don't rely on the watch closing its channel on cancel
+			return rv, ctx.Err()
+		case e, ok := <-w.ResultChan():
+			if !ok {
+				return rv, nil // server closed the watch: resume from rv
+			}
+			ev = e
+		}
 		if ev.Type == watch.Error {
 			return rv, apierrors.FromObject(ev.Object)
 		}
@@ -143,7 +154,6 @@ func (a *Agent) consume(ctx context.Context, gvr schema.GroupVersionResource, w 
 		}
 		rv = u.GetResourceVersion()
 	}
-	return rv, nil
 }
 
 // relist sends every object as a listed item, then tells the hub the list is complete
