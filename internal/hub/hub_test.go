@@ -3,9 +3,11 @@ package hub
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,7 +22,14 @@ func TestHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	srv := httptest.NewServer(Handler(s, "secret"))
+	// Callers sending "X-Test-Namespace: x" may only see namespace x.
+	access := func(r *http.Request) store.Access {
+		if ns := r.Header.Get("X-Test-Namespace"); ns != "" {
+			return store.Access{Scopes: []store.Scope{{Namespaces: []string{ns}}}}
+		}
+		return store.Access{All: true}
+	}
+	srv := httptest.NewServer(Handler(s, "secret", access))
 	defer srv.Close()
 
 	t0 := time.Date(2026, 10, 20, 14, 30, 0, 0, time.UTC)
@@ -82,6 +91,36 @@ func TestHandler(t *testing.T) {
 	if code := get("/api/v1/changes?since=yesterday", nil); code != 400 {
 		t.Fatalf("bad time: %d, want 400", code)
 	}
+	restricted := func(path string) (int, string) {
+		req, _ := http.NewRequest("GET", srv.URL+path, nil)
+		req.Header.Set("X-Test-Namespace", "other")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var b bytes.Buffer
+		b.ReadFrom(resp.Body)
+		return resp.StatusCode, strings.TrimSpace(b.String())
+	}
+	for path, want := range map[string]string{
+		"/api/v1/changes":  "[]",
+		"/api/v1/clusters": `[{"name":"prod"`, // cluster visible: namespace "other" may exist there
+		"/api/v1/history?cluster=prod&kind=ConfigMap&namespace=shop&name=cfg": "[]",
+	} {
+		if code, body := restricted(path); code != 200 || !strings.HasPrefix(body, want) {
+			t.Errorf("restricted %s: %d %s", path, code, body)
+		}
+	}
+	for _, path := range []string{
+		"/api/v1/at?cluster=prod&kind=ConfigMap&namespace=shop&name=cfg",
+		fmt.Sprintf("/api/v1/changes/%d", feed[0].ID),
+	} {
+		if code, _ := restricted(path); code != 404 {
+			t.Errorf("restricted %s: %d, want 404 (indistinguishable from missing)", path, code)
+		}
+	}
+
 	if code := get("/api/v1/checkpoints?cluster=prod&uid=uid-1", nil); code != 401 {
 		t.Fatalf("checkpoints without token: %d, want 401", code)
 	}

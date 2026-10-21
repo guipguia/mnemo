@@ -188,8 +188,109 @@ func (s *Store) Record(ctx context.Context, c *Change, listed bool, attribute fu
 	return true, tx.Commit()
 }
 
+// Access is what a caller may see: everything, or the union of Scopes. The zero value sees nothing.
+type Access struct {
+	All    bool
+	Scopes []Scope
+}
+
+// Scope grants clusters × namespaces. Patterns are a name, "*", or "prefix*".
+// Empty Clusters means every cluster. Empty Namespaces means every namespace and
+// cluster-scoped objects; with Namespaces set, "*" matches any namespace but never
+// cluster-scoped objects (ClusterRoles, ClusterRoleBindings, ...).
+type Scope struct {
+	Clusters   []string `json:"clusters,omitempty"`
+	Namespaces []string `json:"namespaces,omitempty"`
+}
+
+func (a Access) Allows(cluster, namespace string) bool {
+	if a.All {
+		return true
+	}
+	for _, s := range a.Scopes {
+		if matchAny(s.Clusters, cluster, false) && matchAny(s.Namespaces, namespace, true) {
+			return true
+		}
+	}
+	return false
+}
+
+// AllowsCluster reports whether anything in cluster is visible.
+func (a Access) AllowsCluster(cluster string) bool {
+	if a.All {
+		return true
+	}
+	for _, s := range a.Scopes {
+		if matchAny(s.Clusters, cluster, false) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchAny(patterns []string, v string, namespace bool) bool {
+	if len(patterns) == 0 {
+		return true
+	}
+	for _, p := range patterns {
+		if namespace && v == "" {
+			continue // cluster-scoped: only visible without namespace restrictions
+		}
+		if p == "*" || p == v || (strings.HasSuffix(p, "*") && strings.HasPrefix(v, strings.TrimSuffix(p, "*"))) {
+			return true
+		}
+	}
+	return false
+}
+
+// sql renders Access as a WHERE condition with the same semantics as Allows.
+func (a Access) sql() (string, []any) {
+	if a.All {
+		return "1 = 1", nil
+	}
+	if len(a.Scopes) == 0 {
+		return "1 = 0", nil
+	}
+	var ors []string
+	var args []any
+	for _, s := range a.Scopes {
+		c, ca := matchSQL("cluster", s.Clusters)
+		n, na := matchSQL("namespace", s.Namespaces)
+		if len(s.Namespaces) > 0 {
+			n = "(namespace != '' AND " + n + ")"
+		}
+		ors = append(ors, "("+c+" AND "+n+")")
+		args = append(append(args, ca...), na...)
+	}
+	return "(" + strings.Join(ors, " OR ") + ")", args
+}
+
+func matchSQL(col string, patterns []string) (string, []any) {
+	if len(patterns) == 0 {
+		return "1 = 1", nil
+	}
+	var ors []string
+	var args []any
+	for _, p := range patterns {
+		switch {
+		case p == "*":
+			return "1 = 1", nil
+		case strings.HasSuffix(p, "*"):
+			// substr, not LIKE: case-sensitive and portable to Postgres and MySQL.
+			pre := strings.TrimSuffix(p, "*")
+			ors = append(ors, "substr("+col+", 1, ?) = ?")
+			args = append(args, len(pre), pre)
+		default:
+			ors = append(ors, col+" = ?")
+			args = append(args, p)
+		}
+	}
+	return "(" + strings.Join(ors, " OR ") + ")", args
+}
+
 // Filter narrows the change feed. Empty fields match everything.
 type Filter struct {
+	Access                                   Access // required: the zero value returns nothing
 	Cluster, Namespace, Kind, Author, Source string
 	DriftOnly                                bool
 	Since, Until                             time.Time // Since inclusive, Until exclusive
@@ -198,8 +299,8 @@ type Filter struct {
 
 // Changes is the change feed, newest first, without object bodies.
 func (s *Store) Changes(ctx context.Context, f Filter) ([]Change, error) {
-	var where []string
-	var args []any
+	cond, args := f.Access.sql()
+	where := []string{cond}
 	add := func(cond string, v any) {
 		where = append(where, cond)
 		args = append(args, v)
@@ -220,10 +321,7 @@ func (s *Store) Changes(ctx context.Context, f Filter) ([]Change, error) {
 	if !f.Until.IsZero() {
 		add("ts < ?", f.Until.UnixNano())
 	}
-	q := "SELECT " + cols + " FROM changes"
-	if len(where) > 0 {
-		q += " WHERE " + strings.Join(where, " AND ")
-	}
+	q := "SELECT " + cols + " FROM changes WHERE " + strings.Join(where, " AND ")
 	limit := f.Limit
 	if limit <= 0 {
 		limit = 100

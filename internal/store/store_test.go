@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -63,7 +64,7 @@ func TestStore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	feed, err := s.Changes(ctx, Filter{Cluster: "prod", Since: at(2)})
+	feed, err := s.Changes(ctx, Filter{Access: Access{All: true}, Cluster: "prod", Since: at(2)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,8 +131,65 @@ func TestClustersCheckpointsPrune(t *testing.T) {
 	if n, _ := s.Prune(ctx, "prod", "", "ConfigMap", map[string]bool{"ns/a": true}, now.Add(time.Minute)); n != 0 {
 		t.Fatalf("second prune = %d, want 0", n)
 	}
-	drift, err := s.Changes(ctx, Filter{DriftOnly: true})
+	drift, err := s.Changes(ctx, Filter{Access: Access{All: true}, DriftOnly: true})
 	if err != nil || len(drift) != 1 || drift[0].Name != "a" {
 		t.Fatalf("drift feed = %v, %v", drift, err)
+	}
+}
+
+func TestAccess(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	objects := []Ref{
+		{Cluster: "prod", Kind: "ConfigMap", Namespace: "shop", Name: "a"},
+		{Cluster: "prod", Kind: "ConfigMap", Namespace: "shop-api", Name: "b"},
+		{Cluster: "prod", Kind: "ConfigMap", Namespace: "payments", Name: "c"},
+		{Cluster: "prod", Kind: "ClusterRole", Name: "d"}, // cluster-scoped
+		{Cluster: "prod-eu", Kind: "ConfigMap", Namespace: "shop", Name: "e"},
+		{Cluster: "staging", Kind: "ConfigMap", Namespace: "shop", Name: "f"},
+	}
+	for _, r := range objects {
+		if _, err := s.Record(ctx, &Change{Ref: r, Time: time.Now(), Object: []byte(`{}`)}, false, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		a    Access
+		want string
+	}{
+		{"zero value sees nothing", Access{}, ""},
+		{"all", Access{All: true}, "abcdef"},
+		{"one cluster, everything in it", Access{Scopes: []Scope{{Clusters: []string{"prod"}}}}, "abcd"},
+		{"cluster prefix", Access{Scopes: []Scope{{Clusters: []string{"prod*"}}}}, "abcde"},
+		{"namespace prefix", Access{Scopes: []Scope{{Clusters: []string{"prod"}, Namespaces: []string{"shop*"}}}}, "ab"},
+		{"namespace * excludes cluster-scoped", Access{Scopes: []Scope{{Clusters: []string{"prod"}, Namespaces: []string{"*"}}}}, "abc"},
+		{"union of scopes", Access{Scopes: []Scope{{Namespaces: []string{"payments"}}, {Clusters: []string{"staging"}}}}, "cf"},
+	} {
+		feed, err := s.Changes(ctx, Filter{Access: tc.a})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, c := range feed {
+			got = append(got, c.Name)
+			if !tc.a.Allows(c.Cluster, c.Namespace) {
+				t.Errorf("%s: SQL returned %s but Allows denies it", tc.name, c.Name)
+			}
+		}
+		slices.Sort(got)
+		if strings.Join(got, "") != tc.want {
+			t.Errorf("%s: feed = %v, want %q", tc.name, got, tc.want)
+		}
+		// Allows must agree with SQL for denied objects too.
+		for _, r := range objects {
+			if tc.a.Allows(r.Cluster, r.Namespace) != strings.Contains(tc.want, r.Name) {
+				t.Errorf("%s: Allows(%s/%s) disagrees with SQL", tc.name, r.Cluster, r.Namespace)
+			}
+		}
 	}
 }
