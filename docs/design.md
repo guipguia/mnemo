@@ -58,23 +58,29 @@ for its per-GVK resume `resourceVersion`, so the agent keeps no local state.
 
 - Raw dynamic watches per GVK with bookmarks, no informers: informers cache every object in
   memory, and the hub's last stored state is already the "before" side of each diff.
-- The agent sends normalized full objects; the **hub** dedupes, diffs, and stores. This keeps the
-  agent stateless and makes at-least-once delivery safe (a resent object is a no-op).
+- The agent sends normalized full objects plus their `managedFields`; the **hub** dedupes,
+  diffs, attributes, and stores. This keeps the agent stateless and makes at-least-once
+  delivery safe (a resent object is a no-op).
 - Resume from the checkpoint held by the hub.
+- Short outages need nothing special: the watch resumes from the checkpoint and replays what
+  was missed, with normal attribution.
 - `410 Gone` (hub or agent down past the etcd compaction window): relist, compare against the
-  hub's latest state, record differences as *"changed while offline, author unknown"*.
+  hub's latest state, record differences as *"changed while offline"*; objects missing from
+  the list become tombstones with author unknown.
 - Deletions are stored as tombstones.
 
 ## Noise filtering
 
 Drop `status`, `metadata.resourceVersion`, `metadata.managedFields`, `metadata.generation`,
-and the `kubectl.kubernetes.io/last-applied-configuration` annotation by default.
+and the `kubectl.kubernetes.io/last-applied-configuration` and `deployment.kubernetes.io/revision`
+annotations by default.
 Configurable per GVK. Hash the normalized object and skip the write if unchanged.
 
 ## Timestamps
 
-A watch event carries no time. In order of preference: audit `stageTimestamp` (when
-attribution is on) → matching `managedFields[].time` → time observed by the agent.
+A watch event carries no time. Watch events use the time the agent observed them (seconds
+behind at most). Listed objects (baseline, offline catch-up) use their newest non-status
+`managedFields[].time`. Audit `stageTimestamp` replaces both once audit attribution exists.
 
 ## The "who" problem
 
@@ -86,6 +92,12 @@ A watch event says *what* changed, not *who*.
 | Audit webhook → local agent | Yes, full `userInfo` | Self-managed clusters. v0.2. |
 | Cloud audit log readers (EKS/GKE/AKS) | Yes | Managed clusters disallow audit webhooks. Later. |
 | Validating admission webhook | Yes | Rejected: in the write path, can block writes when down. |
+
+**How `managedFields` attribution works:** a writer takes ownership of the fields it changes,
+so the author of a modification is the manager that owns the changed paths. List items are
+matched by any key (`k:{"name":"nginx"}`), since the diff uses indexes. Picking the newest
+entry instead was wrong in practice: `/scale` entries carry no timestamp, and timestamps have
+1s precision. Fallback when nobody owns the changed paths (removed fields): newest entry.
 
 Joining audit events to changes: exact match on `responseObject.metadata.resourceVersion`
 requires `RequestResponse` audit level. Recommend it only for watched GVKs (never Secrets),
