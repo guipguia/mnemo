@@ -75,3 +75,35 @@ func TestAttribute(t *testing.T) {
 		t.Errorf("deleted: author=%q source=%q", c.Author, c.Source)
 	}
 }
+
+// The agent stamps events when it processes them; after a hub outage that can be minutes late.
+func TestAttributeTime(t *testing.T) {
+	ms := deploymentManagers() // kubectl-set wrote the image at 18:15:15; /scale has no time
+	setAt := ms[2].Time.Time
+	late := setAt.Add(10 * time.Minute)
+	obj := []byte(`{"metadata":{"creationTimestamp":"2026-10-21T18:15:13Z"}}`)
+
+	for _, tc := range []struct {
+		name string
+		c    store.Change
+		want time.Time
+	}{
+		{"modified: owner's time", store.Change{Type: store.Modified, Paths: []string{"/spec/template/spec/containers/0/image"}}, setAt},
+		{"modified via /scale: no time, keep observed", store.Change{Type: store.Modified, Paths: []string{"/spec/replicas"}}, late},
+		{"added: creationTimestamp", store.Change{Type: store.Added}, time.Date(2026, 10, 21, 18, 15, 13, 0, time.UTC)},
+		{"baseline: agent already chose", store.Change{Type: store.Baseline}, late},
+	} {
+		tc.c.Object, tc.c.Time = obj, late
+		attribute(&tc.c, ms)
+		if !tc.c.Time.Equal(tc.want) {
+			t.Errorf("%s: time = %v, want %v", tc.name, tc.c.Time, tc.want)
+		}
+	}
+
+	// A manager time after the observed time (API server clock ahead) is ignored.
+	c := store.Change{Type: store.Modified, Paths: []string{"/spec/template/spec/containers/0/image"}, Object: obj, Time: setAt.Add(-time.Minute)}
+	attribute(&c, ms)
+	if !c.Time.Equal(setAt.Add(-time.Minute)) {
+		t.Errorf("future manager time moved the change forward: %v", c.Time)
+	}
+}

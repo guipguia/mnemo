@@ -138,9 +138,10 @@ func (s *Store) Record(ctx context.Context, c *Change, listed bool, attribute fu
 	defer tx.Rollback()
 
 	var prev []byte // nil if never seen or latest version is a deletion
-	err = tx.QueryRowContext(ctx, `SELECT object FROM changes
+	var prevTS int64
+	err = tx.QueryRowContext(ctx, `SELECT object, ts FROM changes
 		WHERE cluster = ? AND api_group = ? AND kind = ? AND namespace = ? AND name = ?
-		ORDER BY id DESC LIMIT 1`, c.Cluster, c.Group, c.Kind, c.Namespace, c.Name).Scan(&prev)
+		ORDER BY id DESC LIMIT 1`, c.Cluster, c.Group, c.Kind, c.Namespace, c.Name).Scan(&prev, &prevTS)
 	seen := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
@@ -167,6 +168,10 @@ func (s *Store) Record(ctx context.Context, c *Change, listed bool, attribute fu
 
 	if attribute != nil {
 		attribute(c)
+	}
+	// Corrected times have 1s precision; never let a version sort before the one it follows.
+	if seen && c.Time.UnixNano() < prevTS {
+		c.Time = time.Unix(0, prevTS).UTC()
 	}
 
 	var paths, object any // stay NULL unless set
