@@ -31,7 +31,9 @@ Design details: [docs/design.md](docs/design.md).
 - [ ] PostgreSQL backend (enables hub HA)
 - [ ] MySQL backend
 - [ ] Shared storage conformance suite run against every backend in CI
-- [ ] UI and API respect caller RBAC (SubjectAccessReview per cluster)
+- [x] SSO: OIDC login and trusted auth-proxy headers ([docs/auth.md](docs/auth.md))
+- [x] Policy: IdP groups/users → clusters × namespaces
+- [ ] Optional mode: evaluate access against each cluster's recorded Kubernetes RBAC
 - [ ] Agent ↔ hub mTLS
 - [ ] Prometheus metrics, OpenTelemetry traces
 - [ ] MCP server for AI incident agents

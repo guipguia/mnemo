@@ -182,9 +182,13 @@ Not to be confused with the inbound audit webhook used for attribution.
 
 ## Read access
 
-- v0.1: `kubectl port-forward`, no auth, documented as admin-only.
-- Later: identify the caller (OIDC / auth proxy), run a SubjectAccessReview against the
-  object's cluster before showing its history. Otherwise mnemo is an RBAC bypass.
+- **Who:** `--auth none` (port-forward, admin-only), `oidc` (built-in login), or `proxy`
+  (headers from an auth proxy, trusted only from configured CIDRs). See [auth.md](auth.md).
+- **What:** a policy maps users and IdP groups to clusters × namespaces. Enforced in SQL for
+  the feed (so limits stay correct) and per object elsewhere. Denied objects look missing.
+- **Why not Kubernetes RBAC (yet):** the hub has no credentials for agent clusters, so it
+  can't run a SubjectAccessReview, and IdP identities often don't match cluster identities
+  (e.g. EKS IAM). Evaluating the RBAC objects mnemo already records is a possible later mode.
 - `kubectl mnemo` plugin, e.g. `kubectl mnemo diff deploy/api --at "yesterday 14:32"`.
 
 ## Integrations

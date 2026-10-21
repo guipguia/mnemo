@@ -11,7 +11,8 @@ We acknowledge within 3 business days and aim to fix critical issues within 30 d
 
 mnemo stores historical copies of cluster objects. Of particular concern:
 - Secret data leaking into stored history or the UI (Secrets are excluded by default).
-- RBAC bypass: users seeing history of objects they cannot `get` live.
+- Access bypass: users seeing history outside their policy scope, or forging identity
+  (OIDC session, auth-proxy headers). See [docs/auth.md](docs/auth.md).
 - Over-broad controller permissions.
 
 ## Supported versions
