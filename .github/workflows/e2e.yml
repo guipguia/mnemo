@@ -1,0 +1,27 @@
+name: E2E
+on:
+  push: {branches: [main]}
+  pull_request:
+permissions: {contents: read}
+jobs:
+  kind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with: {cluster_name: e2e}
+      - name: Build and load the image
+        run: |
+          docker build -t mnemo:e2e .
+          kind load docker-image mnemo:e2e --name e2e
+      - name: Install, replay the incident, check what mnemo recorded
+        run: IMAGE=mnemo:e2e test/e2e/run.sh
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get pods -A
+          kubectl -n mnemo-e2e describe deploy/mnemo
+          kubectl -n mnemo-e2e logs deploy/mnemo --tail=200

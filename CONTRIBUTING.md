@@ -40,7 +40,18 @@ Open http://127.0.0.1:8080, then change something with
 For UI work, keep the hub running and use `cd ui && npm run dev`: Vite serves the UI with
 hot reload and proxies `/api` to the hub on port 8080.
 
-Tests: `go test -race ./...` and `cd ui && npm run build` (typechecks).
+Tests:
+
+- `go test -race ./...`: unit tests, including the agent watch loop against a fake API server.
+- `cd ui && npm run build`: typechecks the UI.
+- `test/e2e/run.sh`: installs the chart on a real cluster, replays `demo/incident.sh`, and
+  checks what mnemo recorded, including across a hub outage. CI runs it on kind:
+
+  ```sh
+  kind create cluster --name e2e --kubeconfig /tmp/e2e.kubeconfig
+  docker build -t mnemo:e2e . && kind load docker-image mnemo:e2e --name e2e
+  KUBECONFIG=/tmp/e2e.kubeconfig IMAGE=mnemo:e2e test/e2e/run.sh
+  ```
 
 ## Where to start
 
