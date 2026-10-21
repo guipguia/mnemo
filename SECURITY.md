@@ -19,6 +19,18 @@ mnemo stores historical copies of cluster objects. Of particular concern:
 
 Only the latest minor release receives fixes until 1.0.
 
+## How releases are hardened
+
+- **Minimal image:** the runtime image is distroless (`static-debian13:nonroot`, pinned by
+  digest): no shell, no package manager, nothing but the `mnemo` binary and CA certificates.
+  It runs as non-root with a read-only root filesystem.
+- **No known fixable CVEs:** every PR and every release scans the image with Trivy and fails
+  on HIGH or CRITICAL vulnerabilities that have a fix. UI runtime dependencies are checked
+  with `npm audit`. Dependabot updates Go modules, npm packages, base image digests, and
+  GitHub Actions.
+- **Signed and attested:** images, the Helm chart, and the binaries' checksums are signed by
+  the release workflow, with an SBOM and SLSA build provenance. See below to verify.
+
 ## Verifying releases
 
 Release artifacts are signed keylessly with [Sigstore](https://www.sigstore.dev): the
