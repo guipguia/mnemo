@@ -1,0 +1,20 @@
+{{- if include "mnemo.hasHub" . }}
+Open the UI:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "mnemo.fullname" . }} 8080:{{ .Values.hub.service.port }}
+  open http://127.0.0.1:8080
+{{ if eq .Values.hub.auth.mode "none" }}
+Login is off (hub.auth.mode=none): anyone who can reach the service sees all history.
+Keep it behind port-forward, or enable OIDC: https://github.com/guipguia/mnemo/blob/main/docs/auth.md
+{{- end }}
+
+To add another cluster, install this chart there with mode=agent, agent.hubURL pointing here,
+and token.existingSecret holding this hub's token:
+
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "mnemo.tokenSecret" . }} -o jsonpath='{.data.token}' | base64 -d
+{{- else }}
+Agent "{{ .Values.agent.cluster }}" pushes to {{ .Values.agent.hubURL }}.
+Check it connected:
+
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "mnemo.fullname" . }} | grep "agent started"
+{{- end }}

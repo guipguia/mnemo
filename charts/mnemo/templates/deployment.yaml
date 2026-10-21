@@ -1,0 +1,116 @@
+{{- include "mnemo.validate" . }}
+{{- $hub := include "mnemo.hasHub" . }}
+{{- $agent := include "mnemo.hasAgent" . }}
+{{- $auth := .Values.hub.auth }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mnemo.fullname" . }}
+  labels: {{- include "mnemo.labels" . | nindent 4 }}
+spec:
+  replicas: 1  # SQLite: one writer
+  strategy: {type: Recreate}  # the ReadWriteOnce volume can't attach to two pods
+  selector:
+    matchLabels: {{- include "mnemo.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "mnemo.selector" . | nindent 8 }}
+      annotations:
+        checksum/policy: {{ toYaml $auth.policy | sha256sum }}
+        {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
+    spec:
+      serviceAccountName: {{ include "mnemo.fullname" . }}
+      automountServiceAccountToken: {{ if $agent }}true{{ else }}false{{ end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: mnemo
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - {{ .Values.mode }}
+            {{- if $hub }}
+            - --db=/data/mnemo.db
+            - --listen=:8080
+            - --auth={{ $auth.mode }}
+            {{- if ne $auth.mode "none" }}
+            - --policy=/etc/mnemo/policy.yaml
+            {{- end }}
+            {{- if eq $auth.mode "oidc" }}
+            - --oidc-issuer={{ $auth.oidc.issuer }}
+            - --oidc-client-id={{ $auth.oidc.clientID }}
+            - --oidc-redirect-url={{ $auth.oidc.redirectURL }}
+            - --oidc-scopes={{ $auth.oidc.scopes }}
+            - --oidc-username-claim={{ $auth.oidc.usernameClaim }}
+            - --oidc-groups-claim={{ $auth.oidc.groupsClaim }}
+            {{- end }}
+            {{- if eq $auth.mode "proxy" }}
+            - --proxy-trusted-cidrs={{ $auth.proxy.trustedCIDRs }}
+            - --proxy-user-header={{ $auth.proxy.userHeader }}
+            - --proxy-groups-header={{ $auth.proxy.groupsHeader }}
+            {{- end }}
+            {{- end }}
+            {{- if $agent }}
+            - --cluster={{ .Values.agent.cluster }}
+            - --resources={{ join "," .Values.agent.watch }}
+            {{- end }}
+            {{- if eq .Values.mode "agent" }}
+            - --hub={{ .Values.agent.hubURL }}
+            {{- end }}
+            {{- range .Values.extraArgs }}
+            - {{ . }}
+            {{- end }}
+          env:
+            - name: MNEMO_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ include "mnemo.tokenSecret" . }}, key: token}}
+            {{- if and $hub (eq $auth.mode "oidc") }}
+            - name: MNEMO_OIDC_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: {{ $auth.oidc.existingSecret }}, key: client-secret}}
+            - name: MNEMO_SESSION_KEY
+              valueFrom: {secretKeyRef: {name: {{ $auth.oidc.existingSecret }}, key: session-key}}
+            {{- end }}
+          {{- if $hub }}
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            {{- if $hub }}
+            - {name: data, mountPath: /data}
+            {{- if ne $auth.mode "none" }}
+            - {name: policy, mountPath: /etc/mnemo, readOnly: true}
+            {{- end }}
+            {{- end }}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        {{- if $hub }}
+        - name: data
+          persistentVolumeClaim: {claimName: {{ include "mnemo.fullname" . }}}
+        {{- if ne $auth.mode "none" }}
+        - name: policy
+          configMap: {name: {{ include "mnemo.fullname" . }}-policy}
+        {{- end }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,85 @@
+# all:   hub + agent in one pod. Single cluster, simplest install.
+# hub:   the central hub only (storage, API, UI). Agents in other clusters push to it.
+# agent: watch this cluster and push to a hub elsewhere.
+mode: all
+
+image:
+  repository: ghcr.io/guipguia/mnemo
+  tag: ""  # defaults to the chart's appVersion
+  pullPolicy: IfNotPresent
+
+# Shared secret between agents and the hub. For multi-cluster, create one Secret with key
+# "token" in every cluster and set existingSecret, so all agents and the hub agree.
+# Otherwise the chart generates a token and keeps it across upgrades.
+token:
+  existingSecret: ""
+
+agent:
+  # Name shown in mnemo for this cluster. Required in modes all and agent.
+  cluster: ""
+  # Hub URL, mode agent only. e.g. https://mnemo.example.com
+  hubURL: ""
+  # What to watch, as group/version/resource ("v1/configmaps" for the core group).
+  # The agent's read-only ClusterRole is generated from this list. Secrets are refused.
+  watch:
+    - apps/v1/deployments
+    - apps/v1/statefulsets
+    - apps/v1/daemonsets
+    - v1/configmaps
+    - v1/services
+    - v1/serviceaccounts
+    - networking.k8s.io/v1/ingresses
+    - rbac.authorization.k8s.io/v1/roles
+    - rbac.authorization.k8s.io/v1/rolebindings
+    - rbac.authorization.k8s.io/v1/clusterroles
+    - rbac.authorization.k8s.io/v1/clusterrolebindings
+
+hub:
+  persistence:
+    size: 5Gi
+    storageClass: ""
+    # Keep the history volume on `helm uninstall`. Delete the PVC by hand to drop history.
+    keepOnUninstall: true
+  service:
+    type: ClusterIP
+    port: 80
+    nodePort: null
+  ingress:
+    enabled: false
+    className: ""
+    host: mnemo.example.com
+    annotations: {}
+    tls: []
+  # Login and access for the UI/API. See docs/auth.md.
+  auth:
+    mode: none  # none | oidc | proxy
+    # Required with oidc/proxy, e.g.
+    # policy:
+    #   rules:
+    #   - groups: [sre]
+    #   - groups: [team-shop]
+    #     clusters: [prod]
+    #     namespaces: [shop]
+    policy: {}
+    oidc:
+      issuer: ""
+      clientID: ""
+      redirectURL: ""  # https://<host>/auth/callback
+      scopes: openid,email,profile
+      usernameClaim: email
+      groupsClaim: groups
+      # Secret with keys client-secret and session-key (32+ random bytes).
+      existingSecret: ""
+    proxy:
+      trustedCIDRs: ""  # required: where the auth proxy connects from
+      userHeader: X-Forwarded-User
+      groupsHeader: X-Forwarded-Groups
+
+extraArgs: []
+resources:
+  requests: {cpu: 50m, memory: 64Mi}
+  limits: {memory: 512Mi}
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

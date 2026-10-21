@@ -1,0 +1,18 @@
+{{- if not .Values.token.existingSecret }}
+{{- $name := include "mnemo.tokenSecret" . }}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $name }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  labels: {{- include "mnemo.labels" . | nindent 4 }}
+  {{- if .Values.hub.persistence.keepOnUninstall }}
+  annotations:
+    # Kept with the history: a reinstall must not lock out agents holding this token.
+    helm.sh/resource-policy: keep
+  {{- end }}
+type: Opaque
+data:
+  # Generated once, then kept across upgrades.
+  token: {{ if $existing }}{{ index $existing.data "token" }}{{ else }}{{ randAlphaNum 40 | b64enc }}{{ end }}
+{{- end }}

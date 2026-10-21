@@ -1,0 +1,74 @@
+{{- if include "mnemo.hasHub" . }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "mnemo.fullname" . }}
+  labels: {{- include "mnemo.labels" . | nindent 4 }}
+  {{- if .Values.hub.persistence.keepOnUninstall }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
+spec:
+  accessModes: [ReadWriteOnce]  # block storage only: SQLite locking is unreliable on NFS
+  {{- with .Values.hub.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.hub.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mnemo.fullname" . }}
+  labels: {{- include "mnemo.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.hub.service.type }}
+  selector: {{- include "mnemo.selector" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.hub.service.port }}
+      targetPort: http
+      {{- if and (eq .Values.hub.service.type "NodePort") .Values.hub.service.nodePort }}
+      nodePort: {{ .Values.hub.service.nodePort }}
+      {{- end }}
+{{- if ne .Values.hub.auth.mode "none" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mnemo.fullname" . }}-policy
+  labels: {{- include "mnemo.labels" . | nindent 4 }}
+data:
+  policy.yaml: |
+    {{- toYaml .Values.hub.auth.policy | nindent 4 }}
+{{- end }}
+{{- if .Values.hub.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "mnemo.fullname" . }}
+  labels: {{- include "mnemo.labels" . | nindent 4 }}
+  {{- with .Values.hub.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.hub.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.hub.ingress.tls }}
+  tls: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.hub.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "mnemo.fullname" . }}
+                port: {name: http}
+{{- end }}
+{{- end }}
