@@ -85,18 +85,28 @@ func Ingest(ctx context.Context, s *store.Store, b Batch) error {
 	return nil
 }
 
-// Handler serves the read API. Agent endpoints (ingest, checkpoints) are only
-// registered when token is set: without it, nothing can write over the network.
-func Handler(s *store.Store, token string) http.Handler {
+// Handler serves the read API, limited to what access(r) allows; objects the caller may
+// not see look exactly like objects that don't exist. Agent endpoints (ingest,
+// checkpoints) use the token instead, and are only registered when it is set.
+func Handler(s *store.Store, token string, access func(*http.Request) store.Access) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/v1/clusters", func(w http.ResponseWriter, r *http.Request) {
-		reply(w)(s.Clusters(r.Context()))
+		all, err := s.Clusters(r.Context())
+		a := access(r)
+		visible := []store.Cluster{}
+		for _, c := range all {
+			if a.AllowsCluster(c.Name) {
+				visible = append(visible, c)
+			}
+		}
+		reply(w)(visible, err)
 	})
 
 	mux.HandleFunc("GET /api/v1/changes", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		f := store.Filter{
+			Access:  access(r),
 			Cluster: q.Get("cluster"), Namespace: q.Get("namespace"), Kind: q.Get("kind"),
 			Author: q.Get("author"), Source: q.Get("source"), DriftOnly: q.Get("drift") == "true",
 		}
@@ -119,7 +129,11 @@ func Handler(s *store.Store, token string) http.Handler {
 			http.Error(w, "invalid id", http.StatusBadRequest)
 			return
 		}
-		reply(w)(s.Get(r.Context(), id))
+		c, err := s.Get(r.Context(), id)
+		if err == nil && !access(r).Allows(c.Cluster, c.Namespace) {
+			err = store.ErrNotFound
+		}
+		reply(w)(c, err)
 	})
 
 	mux.HandleFunc("GET /api/v1/history", func(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +143,11 @@ func Handler(s *store.Store, token string) http.Handler {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		reply(w)(s.History(r.Context(), ref(q), limit))
+		if rf := ref(q); access(r).Allows(rf.Cluster, rf.Namespace) {
+			reply(w)(s.History(r.Context(), rf, limit))
+		} else {
+			reply(w)([]store.Change{}, nil) // same as an object with no history
+		}
 	})
 
 	mux.HandleFunc("GET /api/v1/at", func(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +160,11 @@ func Handler(s *store.Store, token string) http.Handler {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		reply(w)(s.At(r.Context(), ref(q), t))
+		if rf := ref(q); access(r).Allows(rf.Cluster, rf.Namespace) {
+			reply(w)(s.At(r.Context(), rf, t))
+		} else {
+			reply(w)(nil, store.ErrNotFound)
+		}
 	})
 
 	if token != "" {

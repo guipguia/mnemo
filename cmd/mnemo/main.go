@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -23,6 +24,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/guipguia/mnemo/internal/agent"
+	"github.com/guipguia/mnemo/internal/auth"
 	"github.com/guipguia/mnemo/internal/hub"
 	"github.com/guipguia/mnemo/internal/store"
 	"github.com/guipguia/mnemo/ui"
@@ -45,9 +47,11 @@ func run(ctx context.Context, mode string, args []string) error {
 	fs := flag.NewFlagSet(mode, flag.ExitOnError)
 	token := fs.String("token", os.Getenv("MNEMO_TOKEN"), "shared agent/hub token (default $MNEMO_TOKEN)")
 	var db, listen, cluster, hubURL, kubeconfig, resources *string
+	var newAuth func(context.Context) (*auth.Auth, error)
 	if mode == "hub" || mode == "all" {
 		db = fs.String("db", "mnemo.db", "SQLite database path")
 		listen = fs.String("listen", ":8080", "HTTP listen address")
+		newAuth = authFlags(fs)
 	}
 	if mode == "agent" || mode == "all" {
 		cluster = fs.String("cluster", "", "cluster name shown in mnemo (required)")
@@ -63,11 +67,15 @@ func run(ctx context.Context, mode string, args []string) error {
 	fs.Parse(args)
 
 	var st *store.Store
+	var au *auth.Auth
 	if db != nil {
 		if mode == "hub" && *token == "" {
 			return errors.New("hub mode needs --token, or agents can't push")
 		}
 		var err error
+		if au, err = newAuth(ctx); err != nil {
+			return err
+		}
 		if st, err = store.Open(*db); err != nil {
 			return err
 		}
@@ -112,9 +120,13 @@ func run(ctx context.Context, mode string, args []string) error {
 
 	errc := make(chan error, 2)
 	if st != nil {
+		api := hub.Handler(st, *token, au.Access)
 		mux := http.NewServeMux()
-		mux.Handle("/api/", hub.Handler(st, *token))
-		mux.Handle("/", ui.Handler())
+		mux.Handle("/api/v1/ingest", api) // agents: hub token, not SSO
+		mux.Handle("/api/v1/checkpoints", api)
+		mux.Handle("/api/", au.Require(api))
+		mux.Handle("/auth/", au.Routes())
+		mux.Handle("/", au.Require(ui.Handler()))
 		srv := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		go func() { errc <- srv.ListenAndServe() }()
 		go func() {
@@ -123,7 +135,10 @@ func run(ctx context.Context, mode string, args []string) error {
 			defer cancel()
 			srv.Shutdown(shutdown)
 		}()
-		slog.Info("hub listening", "addr", *listen, "db", *db, "ingest", *token != "")
+		slog.Info("hub listening", "addr", *listen, "db", *db, "ingest", *token != "", "auth", au.Mode())
+		if au.Mode() == "none" && !loopback(*listen) {
+			slog.Warn("--auth none on a non-loopback address: anyone who can reach the hub sees all history")
+		}
 	}
 	if ag != nil {
 		go func() { errc <- ag.Run(ctx) }()
@@ -134,4 +149,10 @@ func run(ctx context.Context, mode string, args []string) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func loopback(addr string) bool {
+	host, _, _ := net.SplitHostPort(addr)
+	ip := net.ParseIP(host)
+	return host == "localhost" || (ip != nil && ip.IsLoopback())
 }

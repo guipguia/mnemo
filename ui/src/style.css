@@ -54,6 +54,7 @@ header {
 }
 .logo { font-weight: 700; font-size: 18px; color: var(--text); letter-spacing: -0.02em; }
 .tagline { color: var(--muted); }
+.me { margin-left: auto; color: var(--muted); display: flex; gap: 12px; }
 main { padding: 16px 24px 48px; max-width: 1400px; margin: 0 auto; }
 
 .filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 12px; }
