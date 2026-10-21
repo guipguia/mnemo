@@ -14,3 +14,8 @@ updates:
   - package-ecosystem: docker
     directory: /
     schedule: {interval: weekly}
+    ignore:
+      # Node majors move together in the Dockerfile, CI, and the release workflow, and only
+      # to LTS (even) versions, so they're done by hand. Digest and patch updates still come.
+      - dependency-name: node
+        update-types: [version-update:semver-major]
