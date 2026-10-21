@@ -24,3 +24,28 @@ jobs:
         with: {node-version: 24, cache: npm, cache-dependency-path: ui/package-lock.json}
       - run: npm ci
       - run: npm run build
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - run: helm lint charts/mnemo --set agent.cluster=ci
+      - name: Render every mode
+        run: |
+          helm template m charts/mnemo --set agent.cluster=ci >/dev/null
+          helm template m charts/mnemo --set mode=hub >/dev/null
+          helm template m charts/mnemo --set mode=agent --set agent.cluster=ci --set agent.hubURL=http://hub --set token.existingSecret=t >/dev/null
+          helm template m charts/mnemo --set mode=hub --set hub.auth.mode=oidc --set 'hub.auth.policy.rules[0].groups[0]=sre' \
+            --set hub.auth.oidc.issuer=https://idp --set hub.auth.oidc.clientID=c --set hub.auth.oidc.redirectURL=https://m/auth/callback --set hub.auth.oidc.existingSecret=s >/dev/null
+      - name: Refuse unsafe config
+        run: |
+          ! helm template m charts/mnemo --set agent.cluster=ci --set 'agent.watch={v1/secrets}' 2>/dev/null
+          ! helm template m charts/mnemo --set mode=hub --set hub.auth.mode=proxy --set 'hub.auth.policy.rules[0].groups[0]=sre' 2>/dev/null
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - run: docker build -t mnemo:ci .
+      - run: docker run --rm mnemo:ci version

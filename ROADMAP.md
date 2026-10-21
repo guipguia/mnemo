@@ -12,8 +12,9 @@ Design details: [docs/design.md](docs/design.md).
 - [x] Drift flag: manual changes to GitOps-managed objects
 - [x] API: cluster-wide change feed (primary), object history, object state at time T
 - [x] UI: change feed home screen, per-object timeline, diff view
-- [ ] Read-only ClusterRole generated from config, documented
-- [ ] Helm chart (PVC kept on uninstall), kind-based multi-cluster demo
+- [x] Read-only ClusterRole generated from config, documented
+- [x] Helm chart (PVC and token kept on uninstall), container image
+- [ ] kind-based multi-cluster demo
 - [ ] Scripted "broken ConfigMap" incident demo + README GIF
 
 ## v0.2: who and why
