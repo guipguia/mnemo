@@ -45,3 +45,12 @@ Tests: `go test -race ./...` and `cd ui && npm run build` (typechecks).
 ## Where to start
 
 Issues labelled `good first issue`.
+
+## Releasing (maintainers)
+
+1. Make sure `main` is green.
+2. Tag and push: `git tag -s v0.2.0 -m v0.2.0 && git push origin v0.2.0`.
+   A suffix (`v0.2.0-rc.1`) makes a pre-release: use one first when the release workflow changed.
+3. The [release workflow](.github/workflows/release.yml) builds and signs binaries, the image,
+   and the Helm chart, and creates the GitHub release with generated notes. Edit the notes to
+   lead with what users will notice.

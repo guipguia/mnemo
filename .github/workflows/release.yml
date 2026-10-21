@@ -1,0 +1,114 @@
+# Push a tag like v0.1.0 to release. Tags with a suffix (v0.1.0-rc.1) become pre-releases.
+#
+# Produces: binaries + signed checksums on the GitHub release, a signed multi-arch image with
+# SBOM and provenance at ghcr.io/<owner>/mnemo, and a signed Helm chart at
+# oci://ghcr.io/<owner>/charts/mnemo. Signing is keyless (Sigstore, GitHub OIDC identity).
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions: {contents: read}
+concurrency: {group: release, cancel-in-progress: false}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/mnemo
+  CHARTS: oci://ghcr.io/${{ github.repository_owner }}/charts
+
+jobs:
+  binaries:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # create the release
+      id-token: write      # keyless signing
+      attestations: write  # build provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: {node-version: 24, cache: npm, cache-dependency-path: ui/package-lock.json}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod}
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Build
+        env: {VERSION: "${{ github.ref_name }}"}
+        run: |
+          (cd ui && npm ci && npm run build)
+          mkdir dist build && cp LICENSE README.md build/
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os=${target%/*} arch=${target#*/}
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o build/mnemo ./cmd/mnemo
+            tar -czf "dist/mnemo_${VERSION}_${os}_${arch}.tar.gz" -C build mnemo LICENSE README.md
+          done
+          (cd dist && sha256sum *.tar.gz > checksums.txt)
+      - name: Sign checksums
+        run: cosign sign-blob --yes --bundle dist/checksums.txt.sigstore.json dist/checksums.txt
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with: {subject-path: "dist/*.tar.gz"}
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          flags=(--verify-tag --generate-notes --title "$TAG")
+          [[ "$TAG" == *-* ]] && flags+=(--prerelease)
+          gh release create "$TAG" dist/* "${flags[@]}"
+
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ github.token }}"}
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.ref_name }}
+          build-args: VERSION=${{ github.ref_name }}
+          sbom: true
+          provenance: mode=max
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.licenses=Apache-2.0
+      - name: Sign image
+        env: {DIGEST: "${{ steps.build.outputs.digest }}"}
+        run: cosign sign --yes "$IMAGE@$DIGEST"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  chart:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Package, push and sign
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          # Chart and app versions come from the tag, so they can't drift apart.
+          helm package charts/mnemo --version "${TAG#v}" --app-version "$TAG" -d build
+          echo "$GH_TOKEN" | helm registry login ghcr.io -u "$ACTOR" --password-stdin
+          out=$(helm push build/mnemo-"${TAG#v}".tgz "$CHARTS" 2>&1) && echo "$out"
+          digest=$(echo "$out" | sed -n 's/^Digest: //p')
+          echo "$GH_TOKEN" | cosign login ghcr.io -u "$ACTOR" --password-stdin
+          cosign sign --yes "${CHARTS#oci://}/mnemo@$digest"
