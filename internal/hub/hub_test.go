@@ -79,7 +79,20 @@ func TestHandler(t *testing.T) {
 	if code := get("/api/v1/changes?since=yesterday", nil); code != 400 {
 		t.Fatalf("bad time: %d, want 400", code)
 	}
-	if code := get("/api/v1/checkpoints?cluster=prod", nil); code != 401 {
+	if code := get("/api/v1/checkpoints?cluster=prod&uid=uid-1", nil); code != 401 {
 		t.Fatalf("checkpoints without token: %d, want 401", code)
+	}
+
+	c1 := NewClient(srv.URL, "secret")
+	if cp, err := c1.Resume(t.Context(), "prod", "uid-1"); err != nil || cp["v1/configmaps"] != "42" {
+		t.Fatalf("resume: %v, %v", cp, err)
+	}
+	if _, err := c1.Resume(t.Context(), "prod", "uid-2"); err == nil {
+		t.Fatal("resume with another cluster's name must fail")
+	}
+	batch.ClusterUID = "uid-1"
+	batch.Checkpoints = map[string]string{"v1/configmaps": "43"}
+	if err := c1.Push(t.Context(), batch); err != nil {
+		t.Fatalf("client push: %v", err)
 	}
 }

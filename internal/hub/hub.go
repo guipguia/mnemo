@@ -38,6 +38,18 @@ type Synced struct {
 	Time  time.Time `json:"time"`
 }
 
+// Resume registers the cluster and returns its checkpoints. Registering first means an
+// agent can never resume from checkpoints that belong to another cluster with the same name.
+func Resume(ctx context.Context, s *store.Store, cluster, uid string) (map[string]string, error) {
+	if cluster == "" || uid == "" {
+		return nil, errors.New("cluster and uid are required")
+	}
+	if err := s.RegisterCluster(ctx, cluster, uid); err != nil {
+		return nil, err
+	}
+	return s.Checkpoints(ctx, cluster)
+}
+
 func Ingest(ctx context.Context, s *store.Store, b Batch) error {
 	if b.Cluster == "" || b.ClusterUID == "" {
 		return errors.New("cluster and clusterUID are required")
@@ -135,15 +147,11 @@ func Handler(s *store.Store, token string) http.Handler {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			err := Ingest(r.Context(), s, b)
-			if errors.Is(err, store.ErrClusterConflict) {
-				http.Error(w, err.Error(), http.StatusConflict)
-				return
-			}
-			reply(w)(struct{}{}, err)
+			reply(w)(struct{}{}, Ingest(r.Context(), s, b))
 		}))
 		mux.Handle("GET /api/v1/checkpoints", auth(token, func(w http.ResponseWriter, r *http.Request) {
-			reply(w)(s.Checkpoints(r.Context(), r.URL.Query().Get("cluster")))
+			q := r.URL.Query()
+			reply(w)(Resume(r.Context(), s, q.Get("cluster"), q.Get("uid")))
 		}))
 	}
 	return mux
@@ -164,6 +172,8 @@ func auth(token string, next http.HandlerFunc) http.Handler {
 func reply(w http.ResponseWriter) func(any, error) {
 	return func(v any, err error) {
 		switch {
+		case errors.Is(err, store.ErrClusterConflict):
+			http.Error(w, err.Error(), http.StatusConflict)
 		case errors.Is(err, store.ErrNotFound):
 			http.Error(w, err.Error(), http.StatusNotFound)
 		case err != nil:
