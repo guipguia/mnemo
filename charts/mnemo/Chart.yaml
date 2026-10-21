@@ -1,0 +1,9 @@
+apiVersion: v2
+name: mnemo
+description: Kubernetes time machine. What did this object look like at 14:32 yesterday, and who changed it?
+type: application
+version: 0.1.0
+appVersion: "v0.1.0"
+home: https://github.com/guipguia/mnemo
+sources: [https://github.com/guipguia/mnemo]
+keywords: [kubernetes, incident-response, audit, gitops, drift-detection]

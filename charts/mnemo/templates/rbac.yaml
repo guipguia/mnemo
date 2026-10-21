@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "mnemo.fullname" . }}
+  labels: {{- include "mnemo.labels" . | nindent 4 }}
+{{- if include "mnemo.hasAgent" . }}
+---
+# Read-only, and only what agent.watch lists.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "mnemo.fullname" . }}
+  labels: {{- include "mnemo.labels" . | nindent 4 }}
+rules:
+  {{- range .Values.agent.watch }}
+  {{- $p := splitList "/" . }}
+  - apiGroups: [{{ if eq (len $p) 2 }}""{{ else }}{{ first $p | quote }}{{ end }}]
+    resources: [{{ last $p | quote }}]
+    verbs: [get, list, watch]
+  {{- end }}
+  # Cluster identity: the kube-system namespace UID.
+  - apiGroups: [""]
+    resources: [namespaces]
+    resourceNames: [kube-system]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "mnemo.fullname" . }}
+  labels: {{- include "mnemo.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "mnemo.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "mnemo.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

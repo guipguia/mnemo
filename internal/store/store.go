@@ -113,6 +113,8 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
+func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+
 // Record stores c unless it matches the object's latest version, and reports whether it did.
 // c.Object is the current normalized object, or nil if the object was deleted.
 // listed is true when the object came from a list rather than a watch event.

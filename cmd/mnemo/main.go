@@ -21,6 +21,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/guipguia/mnemo/internal/agent"
@@ -30,10 +31,17 @@ import (
 	"github.com/guipguia/mnemo/ui"
 )
 
+// version is set at release build time: -ldflags "-X main.version=v0.1.0".
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: mnemo hub|agent|all [flags]")
+		fmt.Fprintln(os.Stderr, "usage: mnemo hub|agent|all|version [flags]")
 		os.Exit(2)
+	}
+	if os.Args[1] == "version" {
+		fmt.Println(version)
+		return
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -95,7 +103,11 @@ func run(ctx context.Context, mode string, args []string) error {
 			}
 			gvrs = append(gvrs, gvr)
 		}
-		cfg, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+		// No ~/.kube/config fallback: without --kubeconfig, only in-cluster config.
+		cfg, err := rest.InClusterConfig()
+		if *kubeconfig != "" {
+			cfg, err = clientcmd.BuildConfigFromFlags("", *kubeconfig)
+		}
 		if err != nil {
 			return err
 		}
@@ -126,6 +138,13 @@ func run(ctx context.Context, mode string, args []string) error {
 		mux.Handle("/api/v1/checkpoints", api)
 		mux.Handle("/api/", au.Require(api))
 		mux.Handle("/auth/", au.Routes())
+		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+			if err := st.Ping(r.Context()); err != nil {
+				http.Error(w, err.Error(), http.StatusServiceUnavailable)
+				return
+			}
+			fmt.Fprintln(w, "ok")
+		})
 		mux.Handle("/", au.Require(ui.Handler()))
 		srv := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		go func() { errc <- srv.ListenAndServe() }()
@@ -135,7 +154,7 @@ func run(ctx context.Context, mode string, args []string) error {
 			defer cancel()
 			srv.Shutdown(shutdown)
 		}()
-		slog.Info("hub listening", "addr", *listen, "db", *db, "ingest", *token != "", "auth", au.Mode())
+		slog.Info("hub listening", "version", version, "addr", *listen, "db", *db, "ingest", *token != "", "auth", au.Mode())
 		if au.Mode() == "none" && !loopback(*listen) {
 			slog.Warn("--auth none on a non-loopback address: anyone who can reach the hub sees all history")
 		}
