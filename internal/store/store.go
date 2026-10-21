@@ -116,8 +116,9 @@ func (s *Store) Close() error { return s.db.Close() }
 // Record stores c unless it matches the object's latest version, and reports whether it did.
 // c.Object is the current normalized object, or nil if the object was deleted.
 // listed is true when the object came from a list rather than a watch event.
-// Record fills in c.ID, c.Type and c.Paths.
-func (s *Store) Record(ctx context.Context, c *Change, listed bool) (bool, error) {
+// Record fills in c.ID, c.Type and c.Paths, then calls attribute (if non-nil) so the
+// caller can set authorship from the changed paths before the row is written.
+func (s *Store) Record(ctx context.Context, c *Change, listed bool, attribute func(*Change)) (bool, error) {
 	if c.Cluster == "" || c.Kind == "" || c.Name == "" || c.Time.IsZero() {
 		return false, errors.New("record: cluster, kind, name and time are required")
 	}
@@ -160,6 +161,10 @@ func (s *Store) Record(ctx context.Context, c *Change, listed bool) (bool, error
 		if c.Paths, err = changedPaths(prev, c.Object); err != nil {
 			return false, err
 		}
+	}
+
+	if attribute != nil {
+		attribute(c)
 	}
 
 	var paths, object any // stay NULL unless set
@@ -286,7 +291,7 @@ func (s *Store) Prune(ctx context.Context, cluster, group, kind string, keep map
 		return 0, err
 	}
 	for _, r := range gone {
-		if _, err := s.Record(ctx, &Change{Ref: r, Time: t, Source: "unknown"}, true); err != nil {
+		if _, err := s.Record(ctx, &Change{Ref: r, Time: t, Source: "unknown"}, true, nil); err != nil {
 			return 0, err
 		}
 	}
@@ -322,7 +327,7 @@ func (s *Store) Clusters(ctx context.Context) ([]Cluster, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Cluster
+	out := []Cluster{}
 	for rows.Next() {
 		var c Cluster
 		var ts int64
@@ -366,7 +371,7 @@ func (s *Store) list(ctx context.Context, q string, args ...any) ([]Change, erro
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Change
+	out := []Change{} // [] not null in JSON
 	for rows.Next() {
 		c, err := scan(rows, false)
 		if err != nil {

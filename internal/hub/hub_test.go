@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/guipguia/mnemo/internal/store"
 )
 
@@ -25,8 +27,9 @@ func TestHandler(t *testing.T) {
 	batch := Batch{Cluster: "prod", ClusterUID: "uid-1", Items: []Item{{
 		Change: store.Change{
 			Ref:  store.Ref{Kind: "ConfigMap", Namespace: "shop", Name: "cfg"},
-			Time: t0, Source: "manual", Author: "kubectl-edit", Object: json.RawMessage(`{"data":{"a":"1"}}`),
+			Time: t0, Object: json.RawMessage(`{"data":{"a":"1"}}`),
 		},
+		Managers: []metav1.ManagedFieldsEntry{{Manager: "kubectl-create"}},
 	}}, Checkpoints: map[string]string{"v1/configmaps": "42"}}
 
 	post := func(token string, b Batch) int {

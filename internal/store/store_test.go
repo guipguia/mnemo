@@ -27,7 +27,7 @@ func TestStore(t *testing.T) {
 		if obj != "" {
 			c.Object = []byte(obj)
 		}
-		stored, err := s.Record(ctx, c, listed)
+		stored, err := s.Record(ctx, c, listed, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,7 +59,7 @@ func TestStore(t *testing.T) {
 	}
 
 	other := &Change{Ref: Ref{Cluster: "staging", Kind: "ConfigMap", Namespace: "shop", Name: "cfg"}, Time: at(2), Object: []byte(`{}`)}
-	if _, err := s.Record(ctx, other, false); err != nil {
+	if _, err := s.Record(ctx, other, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -119,7 +119,7 @@ func TestClustersCheckpointsPrune(t *testing.T) {
 	now := time.Now()
 	for _, name := range []string{"a", "b", "c"} {
 		c := &Change{Ref: Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: "ns", Name: name}, Time: now, Object: []byte(`{}`), Drift: name == "a"}
-		if _, err := s.Record(ctx, c, true); err != nil {
+		if _, err := s.Record(ctx, c, true, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

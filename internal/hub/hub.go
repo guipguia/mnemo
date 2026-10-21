@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/guipguia/mnemo/internal/store"
 )
 
@@ -25,9 +27,12 @@ type Batch struct {
 	Checkpoints map[string]string `json:"checkpoints,omitempty"` // "group/version/resource" -> resourceVersion
 }
 
+// Item is one observed object. The hub, not the agent, decides authorship: only the hub
+// knows which paths changed, and the author is whoever owns them in Managers.
 type Item struct {
 	store.Change
-	Listed bool `json:"listed"` // from a list, not a watch event
+	Listed   bool                        `json:"listed"` // from a list, not a watch event
+	Managers []metav1.ManagedFieldsEntry `json:"managers,omitempty"`
 }
 
 // Synced reports a completed relist: every live object of Group/Kind not in Keep was deleted.
@@ -59,7 +64,7 @@ func Ingest(ctx context.Context, s *store.Store, b Batch) error {
 	}
 	for _, it := range b.Items {
 		it.Cluster = b.Cluster
-		if _, err := s.Record(ctx, &it.Change, it.Listed); err != nil {
+		if _, err := s.Record(ctx, &it.Change, it.Listed, func(c *store.Change) { attribute(c, it.Managers) }); err != nil {
 			return err
 		}
 	}
