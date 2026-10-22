@@ -1,4 +1,5 @@
 /bin/
+/mnemo
 /dist/
 node_modules/
 *.db
