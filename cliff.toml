@@ -1,0 +1,42 @@
+# git-cliff config: CHANGELOG.md and release notes from commit subjects. See CONTRIBUTING.md.
+[changelog]
+header = """
+# Changelog
+
+All notable changes to mnemo, generated from commit messages by [git-cliff](https://git-cliff.org).\n
+"""
+body = """
+{% if version %}\
+## [{{ version }}](https://github.com/guipguia/mnemo/releases/tag/{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## Unreleased
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+{% for commit in commits %}
+- {{ commit.message | split(pat="\n") | first | trim }}\
+{% endfor %}
+{% endfor %}\n
+"""
+trim = true
+postprocessors = [
+  { pattern = '\(#(\d+)\)', replace = "([#${1}](https://github.com/guipguia/mnemo/pull/${1}))" },
+]
+
+[git]
+conventional_commits = false
+filter_unconventional = false
+# Release candidates fold into the release that follows them.
+ignore_tags = "-rc"
+# The <!-- n --> prefix only orders the sections.
+commit_parsers = [
+  { message = "^Merge ", skip = true },
+  { message = "^init commit", skip = true },
+  { message = "^(Bump|build\\(deps\\)|dependabot)", group = "<!-- 5 -->Dependencies" },
+  { message = "^Add ", group = "<!-- 0 -->Added" },
+  { message = "^Fix ", group = "<!-- 2 -->Fixed" },
+  { message = "^Test ", group = "<!-- 3 -->Tests" },
+  { message = "^(ci|docs):", group = "<!-- 4 -->CI and docs" },
+  { message = ".*", group = "<!-- 1 -->Changed" },
+]
+sort_commits = "oldest"

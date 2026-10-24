@@ -60,8 +60,11 @@ Issues labelled `good first issue`.
 ## Releasing (maintainers)
 
 1. Make sure `main` is green.
-2. Tag and push: `git tag -s v0.2.0 -m v0.2.0 && git push origin v0.2.0`.
+2. Update the changelog in a PR: `git cliff --tag v0.2.0 -o CHANGELOG.md` ([git-cliff](https://git-cliff.org)).
+   Entries are commit subjects grouped by their first word (`Add`, `Fix`, `Test`, `ci:`, ...,
+   see [cliff.toml](cliff.toml)), so write subjects that make sense to users.
+3. After it merges, tag and push: `git tag -s v0.2.0 -m v0.2.0 && git push origin v0.2.0`.
    A suffix (`v0.2.0-rc.1`) makes a pre-release: use one first when the release workflow changed.
-3. The [release workflow](.github/workflows/release.yml) builds and signs binaries, the image,
-   and the Helm chart, and creates the GitHub release with generated notes. Edit the notes to
+4. The [release workflow](.github/workflows/release.yml) builds and signs binaries, the image,
+   and the Helm chart, and creates the GitHub release with the same notes. Edit the notes to
    lead with what users will notice.
