@@ -23,7 +23,7 @@ jobs:
       attestations: write  # build provenance
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
+        with: {persist-credentials: false, fetch-depth: 0}  # full history for the changelog
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: {node-version: 24, cache: npm, cache-dependency-path: ui/package-lock.json}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -44,12 +44,18 @@ jobs:
         run: cosign sign-blob --yes --bundle dist/checksums.txt.sigstore.json dist/checksums.txt
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with: {subject-path: "dist/*.tar.gz"}
+      # Notes since the previous final release (cliff.toml folds release candidates in).
+      - uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
+        with:
+          config: cliff.toml
+          args: --latest --tag ${{ github.ref_name }} --strip header
+        env: {OUTPUT: notes.md}
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          flags=(--verify-tag --generate-notes --title "$TAG")
+          flags=(--verify-tag --notes-file notes.md --title "$TAG")
           [[ "$TAG" == *-* ]] && flags+=(--prerelease)
           gh release create "$TAG" dist/* "${flags[@]}"
 
