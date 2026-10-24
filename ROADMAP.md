@@ -22,7 +22,7 @@ Design details: [docs/design.md](docs/design.md).
 - [ ] Link GitOps changes to Git commits (Argo CD, Flux)
 - [ ] Outbound webhooks on matching changes (filters, retries, HMAC signatures)
 - [ ] Grafana annotations integration
-- [ ] Retention policy (age / count)
+- [x] Retention policy (age / count)
 - [ ] Litestream backup option in the chart
 - [ ] `kubectl mnemo` plugin
 - [x] Release supply chain: cosign signatures, SBOM, SLSA provenance

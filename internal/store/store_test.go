@@ -218,3 +218,63 @@ func TestRecordKeepsOrder(t *testing.T) {
 		t.Errorf("state at t0 = %s, want the newer version", got.Object)
 	}
 }
+
+func TestExpire(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	day := func(d int) time.Time { return t0.AddDate(0, 0, d) }
+	record := func(name string, d int, obj string) {
+		t.Helper()
+		c := &Change{Ref: Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: "shop", Name: name}, Time: day(d)}
+		if obj != "" {
+			c.Object = []byte(obj)
+		}
+		if _, err := s.Record(ctx, c, false, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record("old", 0, `{"v":1}`) // only version: kept however old
+	record("busy", 0, `{"v":1}`)
+	record("busy", 1, `{"v":2}`)
+	record("busy", 20, `{"v":3}`)
+	record("busy", 21, `{"v":4}`)
+	record("busy", 22, `{"v":5}`)
+	record("gone", 0, `{"v":1}`)
+	record("gone", 1, "") // deleted long ago: dropped entirely
+
+	names := func() map[string]int {
+		cs, err := s.Changes(ctx, Filter{Access: Access{All: true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]int{}
+		for _, c := range cs {
+			out[c.Name]++
+		}
+		return out
+	}
+	if n, err := s.Expire(ctx, day(10), 0); err != nil || n != 4 {
+		t.Fatalf("expire by age: deleted %d, %v; want 4", n, err)
+	}
+	if got := names(); got["old"] != 1 || got["busy"] != 3 || got["gone"] != 0 {
+		t.Fatalf("after age expiry: %v", got)
+	}
+	if n, err := s.Expire(ctx, time.Time{}, 2); err != nil || n != 1 {
+		t.Fatalf("expire by count: deleted %d, %v; want 1", n, err)
+	}
+	if got, err := s.At(ctx, Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: "shop", Name: "busy"}, day(30)); err != nil || string(got.Object) != `{"v":5}` {
+		t.Fatalf("current state after expiry: %s, %v", got.Object, err)
+	}
+	if got := names(); got["busy"] != 2 {
+		t.Fatalf("after count expiry: %v", got)
+	}
+	if n, _ := s.Expire(ctx, time.Time{}, 0); n != 0 {
+		t.Fatalf("no policy deleted %d rows", n)
+	}
+}

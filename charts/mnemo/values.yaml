@@ -40,6 +40,10 @@ hub:
     storageClass: ""
     # Keep the history volume on `helm uninstall`. Delete the PVC by hand to drop history.
     keepOnUninstall: true
+  # Each object's current state is always kept; older versions expire. 0 disables a limit.
+  retention:
+    days: 0
+    versions: 0
   service:
     type: ClusterIP
     port: 80

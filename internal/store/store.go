@@ -403,6 +403,28 @@ func (s *Store) Prune(ctx context.Context, cluster, group, kind string, keep map
 	return len(gone), nil
 }
 
+// Expire deletes versions older than before (if non-zero) and all but the newest maxVersions
+// versions of each object (if > 0), and reports how many rows it deleted. An object's newest
+// version is always kept, so current state survives, unless it is a deletion older than before.
+func (s *Store) Expire(ctx context.Context, before time.Time, maxVersions int) (int64, error) {
+	cut := int64(0) // ts < 0 matches nothing
+	if !before.IsZero() {
+		cut = before.UnixNano()
+	}
+	// ponytail: one transaction blocks ingest while it runs; delete in batches if that hurts.
+	res, err := s.db.ExecContext(ctx, `WITH ranked AS (
+			SELECT id, ts, type, ROW_NUMBER() OVER (
+				PARTITION BY cluster, api_group, kind, namespace, name ORDER BY id DESC) AS n
+			FROM changes)
+		DELETE FROM changes WHERE id IN (SELECT id FROM ranked
+			WHERE (n > 1 AND (ts < ? OR (? > 0 AND n > ?))) OR (n = 1 AND type = ? AND ts < ?))`,
+		cut, maxVersions, maxVersions, string(Deleted), cut)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // RegisterCluster records that an agent for cluster name (identified by uid) checked in.
 // It fails with ErrClusterConflict if another cluster already uses the name, so two
 // clusters can never mix their histories.

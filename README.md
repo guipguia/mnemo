@@ -62,7 +62,8 @@ others access: with the default `hub.auth.mode=none`, anyone who can reach it se
 history. All options: [charts/mnemo/values.yaml](charts/mnemo/values.yaml).
 
 History lives in SQLite on a PersistentVolume (block storage, not NFS), kept on
-`helm uninstall`.
+`helm uninstall`, and is kept forever by default. Cap it with `hub.retention.days` and
+`hub.retention.versions` (per object); each object's current state is never expired.
 
 **Try it:** [`demo/incident.sh`](demo/incident.sh) replays the incident from the GIF on any
 cluster mnemo watches: an Argo CD-managed app, then someone hot-fixing it by hand.
