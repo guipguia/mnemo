@@ -2,11 +2,21 @@ package agent
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
+	"math/big"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -43,9 +53,29 @@ const auditEventList = `{"kind":"EventList","apiVersion":"audit.k8s.io/v1","item
  "responseObject":{"metadata":{"name":"cfg","namespace":"shop","resourceVersion":"812"}}}
 ]}`
 
+// selfSigned writes a throwaway certificate for 127.0.0.1 and returns its paths.
+func selfSigned(t *testing.T) (cert, key string) {
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), NotAfter: time.Now().Add(time.Hour),
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)}}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &k.PublicKey, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kb, _ := x509.MarshalECPrivateKey(k)
+	cert, key = filepath.Join(t.TempDir(), "crt"), filepath.Join(t.TempDir(), "key")
+	os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600)
+	os.WriteFile(key, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kb}), 0o600)
+	return cert, key
+}
+
 func TestAuditWebhook(t *testing.T) {
 	var got []hub.Batch
-	a := &Agent{Cluster: "prod", uid: "uid-1", AuditToken: "audit-secret",
+	cert, key := selfSigned(t)
+	a := &Agent{Cluster: "prod", uid: "uid-1", AuditToken: "audit-secret", AuditCert: cert, AuditKey: key,
 		Resources: []schema.GroupVersionResource{configmaps},
 		Push:      func(_ context.Context, b hub.Batch) error { got = append(got, b); return nil }}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -53,11 +83,12 @@ func TestAuditWebhook(t *testing.T) {
 		t.Fatal(err)
 	}
 	go a.serveAudit(t.Context(), l)
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
 
 	post := func(token string) int {
-		req, _ := http.NewRequest("POST", "http://"+l.Addr().String(), strings.NewReader(auditEventList))
+		req, _ := http.NewRequest("POST", "https://"+l.Addr().String(), strings.NewReader(auditEventList))
 		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}

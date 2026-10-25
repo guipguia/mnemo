@@ -25,3 +25,4 @@ jobs:
           kubectl get pods -A
           kubectl -n mnemo-e2e describe deploy/mnemo
           kubectl -n mnemo-e2e logs deploy/mnemo --tail=200
+          kubectl -n kube-system logs -l component=kube-apiserver --tail=10000 | grep -i audit | tail -20

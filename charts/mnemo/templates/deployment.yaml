@@ -66,10 +66,8 @@ spec:
             {{- end }}
             {{- if $audit }}
             - --audit-listen=:8443
-            {{- if .Values.agent.audit.tlsSecret }}
             - --audit-tls-cert=/etc/mnemo/audit-tls/tls.crt
             - --audit-tls-key=/etc/mnemo/audit-tls/tls.key
-            {{- end }}
             {{- end }}
             {{- range .Values.extraArgs }}
             - {{ . }}
@@ -110,7 +108,7 @@ spec:
           resources: {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
-            {{- if and $audit .Values.agent.audit.tlsSecret }}
+            {{- if $audit }}
             - {name: audit-tls, mountPath: /etc/mnemo/audit-tls, readOnly: true}
             {{- end }}
             {{- if $hub }}
@@ -121,7 +119,7 @@ spec:
             {{- end }}
       volumes:
         - {name: tmp, emptyDir: {}}
-        {{- if and $audit .Values.agent.audit.tlsSecret }}
+        {{- if $audit }}
         - name: audit-tls
           secret: {secretName: {{ .Values.agent.audit.tlsSecret }}}
         {{- end }}

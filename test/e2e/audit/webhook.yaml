@@ -1,10 +1,11 @@
 # Where the API server sends audit events: the agent's audit Service. A fixed clusterIP,
-# because the API server can't resolve Service names. Plain HTTP is for this test only.
+# because the API server can't resolve Service names. The test makes a throwaway
+# self-signed certificate after the cluster exists, so skipping verification is test-only.
 apiVersion: v1
 kind: Config
 clusters:
   - name: mnemo
-    cluster: {server: "http://10.96.200.200:8443"}
+    cluster: {server: "https://10.96.200.200:8443", insecure-skip-tls-verify: true}
 users:
   - name: kube-apiserver
     user: {token: e2e-audit-token}

@@ -70,8 +70,8 @@ func run(ctx context.Context, mode string, args []string) error {
 		resources = fs.String("resources", strings.Join(agent.DefaultResources, ","), "comma-separated group/version/resource list")
 		auditListen = fs.String("audit-listen", "", "receive the API server's audit webhook here, e.g. :8443 (default: off); see docs/audit.md")
 		auditToken = fs.String("audit-token", os.Getenv("MNEMO_AUDIT_TOKEN"), "bearer token the audit webhook must send (default $MNEMO_AUDIT_TOKEN)")
-		auditCert = fs.String("audit-tls-cert", "", "TLS certificate for the audit webhook")
-		auditKey = fs.String("audit-tls-key", "", "TLS key for the audit webhook")
+		auditCert = fs.String("audit-tls-cert", "", "TLS certificate for the audit webhook (required with --audit-listen)")
+		auditKey = fs.String("audit-tls-key", "", "TLS key for the audit webhook (required with --audit-listen)")
 	}
 	if mode == "agent" {
 		hubURL = fs.String("hub", "", "hub URL (required)")
@@ -125,8 +125,9 @@ func run(ctx context.Context, mode string, args []string) error {
 		if *auditListen != "" && *auditToken == "" {
 			return errors.New("--audit-listen needs --audit-token, or anyone could claim to be any user")
 		}
-		if (*auditCert == "") != (*auditKey == "") {
-			return errors.New("--audit-tls-cert and --audit-tls-key go together")
+		// The API server only sends a kubeconfig's token over HTTPS, so there's no plain mode.
+		if *auditListen != "" && (*auditCert == "" || *auditKey == "") {
+			return errors.New("--audit-listen needs --audit-tls-cert and --audit-tls-key")
 		}
 		ag = &agent.Agent{Client: client, Cluster: *cluster, Resources: gvrs,
 			AuditAddr: *auditListen, AuditToken: *auditToken, AuditCert: *auditCert, AuditKey: *auditKey}

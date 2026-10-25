@@ -39,8 +39,8 @@ agent:
     enabled: false
     # Required: Secret with key "token", the bearer token in the API server's webhook config.
     existingSecret: ""
-    # kubernetes.io/tls Secret for the webhook. Without it, audit events cross the pod
-    # network in plain HTTP.
+    # Required: kubernetes.io/tls Secret for the webhook, valid for the address the API
+    # server uses (the clusterIP below, or a node address with a NodePort).
     tlsSecret: ""
     service:
       # The API server resolves names with the node's DNS, not cluster DNS: give the

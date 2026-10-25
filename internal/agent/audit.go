@@ -114,13 +114,7 @@ func (a *Agent) serveAudit(ctx context.Context, l net.Listener) {
 		<-ctx.Done()
 		srv.Close()
 	}()
-	var err error
-	if a.AuditCert != "" {
-		err = srv.ServeTLS(l, a.AuditCert, a.AuditKey)
-	} else {
-		err = srv.Serve(l)
-	}
-	if !errors.Is(err, http.ErrServerClosed) {
+	if err := srv.ServeTLS(l, a.AuditCert, a.AuditKey); !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("audit webhook server stopped", "err", err)
 	}
 }

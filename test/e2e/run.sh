@@ -6,7 +6,7 @@
 #
 # IMAGE must already be loadable by the cluster (e.g. `kind load docker-image`).
 # AUDIT=1 also tests user attribution: the cluster must come from test/e2e/kind.yaml.
-# Needs kubectl, helm, curl, jq. Uses namespaces mnemo-e2e and shop.
+# Needs kubectl, helm, curl, jq (and openssl with AUDIT=1). Uses namespaces mnemo-e2e and shop.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -91,9 +91,15 @@ if [ "${AUDIT:-}" = 1 ]; then
   echo "== audit attribution"
   kubectl -n "$NS" create secret generic mnemo-audit --from-literal=token=e2e-audit-token \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  tls=$(mktemp -d)
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 1 -subj /CN=mnemo-audit \
+    -addext subjectAltName=IP:10.96.200.200 -keyout "$tls/key" -out "$tls/crt" 2>/dev/null
+  kubectl -n "$NS" create secret tls mnemo-audit-tls --cert "$tls/crt" --key "$tls/key" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   kill "$PF" 2>/dev/null || true
   helm upgrade mnemo charts/mnemo -n "$NS" --reuse-values --wait --timeout 4m \
     --set agent.audit.enabled=true --set agent.audit.existingSecret=mnemo-audit \
+    --set agent.audit.tlsSecret=mnemo-audit-tls \
     --set agent.audit.service.clusterIP=10.96.200.200 >/dev/null
   port_forward
   logs_say() { kubectl -n "$NS" logs deploy/mnemo | grep -q "$1"; }

@@ -34,9 +34,9 @@ helm upgrade --install mnemo oci://ghcr.io/guipguia/charts/mnemo -n mnemo --reus
   --set agent.audit.service.clusterIP=10.96.200.200   # any free IP in your Service CIDR
 ```
 
-- **`tlsSecret`** is a `kubernetes.io/tls` Secret, e.g. from cert-manager, whose certificate
-  is valid for the clusterIP (or node address with a NodePort). Without it, audit events,
-  which include the bodies of the watched objects, cross the pod network in plain HTTP.
+- **`tlsSecret`** (required) is a `kubernetes.io/tls` Secret, e.g. from cert-manager, whose
+  certificate is valid for the clusterIP (or node address with a NodePort). The API server
+  only sends the token over HTTPS, and audit events include the bodies of watched objects.
 - **`service.clusterIP`**: the API server resolves names with the node's DNS, not cluster
   DNS, so it can't use `mnemo-audit.mnemo.svc`. Use a fixed clusterIP (control-plane nodes
   running kube-proxy can reach it) or `service.type=NodePort`.

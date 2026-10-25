@@ -61,8 +61,8 @@ type Agent struct {
 	// Push and Resume reach the hub: over HTTP (hub.Client) or in-process (mnemo all).
 	Push   func(context.Context, hub.Batch) error
 	Resume func(ctx context.Context, cluster, uid string) (map[string]string, error)
-	// AuditAddr, if set, is where the agent receives the API server's audit webhook, which
-	// must send AuditToken as a bearer token. TLS when AuditCert and AuditKey are set.
+	// AuditAddr, if set, is where the agent receives the API server's audit webhook over TLS
+	// (AuditCert, AuditKey). The webhook must send AuditToken as a bearer token.
 	AuditAddr, AuditToken, AuditCert, AuditKey string
 
 	uid string
