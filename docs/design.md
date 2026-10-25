@@ -98,7 +98,7 @@ A watch event says *what* changed, not *who*.
 | Source | Gives user? | Notes |
 |---|---|---|
 | `managedFields` | Field manager only (`kubectl`, `argocd`) | Always available. v0.1. |
-| Audit webhook → local agent | Yes, full `userInfo` | Self-managed clusters. v0.2. |
+| Audit webhook → local agent | Yes, full `userInfo` | Self-managed clusters. v0.2, [audit.md](audit.md). |
 | Cloud audit log readers (EKS/GKE/AKS) | Yes | Managed clusters disallow audit webhooks. Later. |
 | Validating admission webhook | Yes | Rejected: in the write path, can block writes when down. |
 
@@ -109,8 +109,10 @@ entry instead was wrong in practice: `/scale` entries carry no timestamp, and ti
 1s precision. Fallback when nobody owns the changed paths (removed fields): newest entry.
 
 Joining audit events to changes: exact match on `responseObject.metadata.resourceVersion`
-requires `RequestResponse` audit level. Recommend it only for watched GVKs (never Secrets),
-with fallback to fuzzy match on objectRef + verb + time window.
+requires `RequestResponse` audit level. Recommend it only for watched GVKs (never Secrets).
+Most deletes return a `Status`, matched instead by `details.uid` against the tombstone.
+Audit events trail the watch (webhook batching), so the hub updates the recorded change.
+No fuzzy match on objectRef + time window: a wrong author is worse than a field manager.
 
 ## Change source: GitOps vs manual
 

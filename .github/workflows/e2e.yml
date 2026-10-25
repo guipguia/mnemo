@@ -12,16 +12,17 @@ jobs:
         with: {persist-credentials: false}
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
       - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
-        with: {cluster_name: e2e}
+        with: {cluster_name: e2e, config: test/e2e/kind.yaml}
       - name: Build and load the image
         run: |
           docker build -t mnemo:e2e .
           kind load docker-image mnemo:e2e --name e2e
       - name: Install, replay the incident, check what mnemo recorded
-        run: IMAGE=mnemo:e2e test/e2e/run.sh
+        run: IMAGE=mnemo:e2e AUDIT=1 test/e2e/run.sh
       - name: Diagnostics
         if: failure()
         run: |
           kubectl get pods -A
           kubectl -n mnemo-e2e describe deploy/mnemo
           kubectl -n mnemo-e2e logs deploy/mnemo --tail=200
+          kubectl -n kube-system logs -l component=kube-apiserver --tail=10000 | grep -i audit | tail -20

@@ -138,3 +138,61 @@ func TestHandler(t *testing.T) {
 		t.Fatalf("client push: %v", err)
 	}
 }
+
+func TestIngestAudit(t *testing.T) {
+	ctx := t.Context()
+	s, err := store.Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	t0 := time.Date(2026, 10, 20, 14, 30, 0, 0, time.UTC)
+	item := func(name, rv, obj, manager string) Item {
+		it := Item{Change: store.Change{Ref: store.Ref{Kind: "ConfigMap", Namespace: "shop", Name: name},
+			UID: name + "-uid", ResourceVersion: rv, Time: t0}}
+		if obj != "" {
+			it.Object = json.RawMessage(obj)
+			it.Managers = []metav1.ManagedFieldsEntry{{Manager: manager}}
+		}
+		return it
+	}
+	gitops := `{"metadata":{"labels":{"argocd.argoproj.io/instance":"shop"}},"data":{"a":"1"}}`
+	ingest := func(b Batch) {
+		t.Helper()
+		b.Cluster, b.ClusterUID = "prod", "uid-1"
+		if err := Ingest(ctx, s, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ingest(Batch{Items: []Item{
+		item("cfg", "10", gitops, "my-script"), // a person's script: looks like a controller
+		item("old", "11", `{"data":{}}`, "kubectl-create"),
+	}})
+	ingest(Batch{Items: []Item{item("old", "12", "", "")}}) // deleted: no field manager
+	ingest(Batch{Audits: []Audit{
+		{Namespace: "shop", Name: "cfg", ResourceVersion: "10", User: "alice@example.com", UserAgent: "my-script/1.0"},
+		{Namespace: "shop", Name: "old", UID: "old-uid", User: "system:serviceaccount:argocd:argocd-application-controller",
+			UserAgent: "argocd-application-controller/v3.1.0"},
+		{Namespace: "shop", Name: "never-recorded", ResourceVersion: "13", User: "bob"},
+		{Namespace: "shop", Name: "old", UID: "old-uid-2", User: "mallory"}, // another object's delete
+	}})
+
+	feed, err := s.Changes(ctx, store.Filter{Access: store.Access{All: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, c := range feed {
+		got[c.Name+"@"+c.ResourceVersion] = fmt.Sprintf("%s %s %v", c.Author, c.Source, c.Drift)
+	}
+	for k, want := range map[string]string{
+		"cfg@10": "alice@example.com manual true", // human on a GitOps-managed object: drift
+		"old@11": "kubectl-create manual false",   // no audit event: field manager stays
+		"old@12": "system:serviceaccount:argocd:argocd-application-controller gitops false",
+	} {
+		if got[k] != want {
+			t.Errorf("%s = %q, want %q", k, got[k], want)
+		}
+	}
+}

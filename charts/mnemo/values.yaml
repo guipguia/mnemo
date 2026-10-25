@@ -33,6 +33,22 @@ agent:
     - rbac.authorization.k8s.io/v1/rolebindings
     - rbac.authorization.k8s.io/v1/clusterroles
     - rbac.authorization.k8s.io/v1/clusterrolebindings
+  # Who made each change, from the API server's audit webhook. Needs API server flags,
+  # so self-managed clusters only. See docs/audit.md.
+  audit:
+    enabled: false
+    # Required: Secret with key "token", the bearer token in the API server's webhook config.
+    existingSecret: ""
+    # Required: kubernetes.io/tls Secret for the webhook, valid for the address the API
+    # server uses (the clusterIP below, or a node address with a NodePort).
+    tlsSecret: ""
+    service:
+      # The API server resolves names with the node's DNS, not cluster DNS: give the
+      # Service a fixed clusterIP and use it in the webhook config, or use a NodePort.
+      type: ClusterIP
+      clusterIP: ""
+      port: 8443
+      nodePort: null
 
 hub:
   persistence:

@@ -76,8 +76,9 @@ cluster mnemo watches: an Argo CD-managed app, then someone hot-fixing it by han
 - **Hub:** dedupes, diffs, and works out who made each change from field ownership in
   `managedFields`; stores history (SQLite now, PostgreSQL and MySQL planned) and serves the
   API and UI.
-- **Attribution today** names the tool (`kubectl-edit`, `argocd-controller`, ...).
-  Real usernames from audit logs come in v0.2.
+- **Attribution** names the tool (`kubectl-edit`, `argocd-controller`, ...). On
+  self-managed clusters, the API server's audit webhook can name the person instead:
+  [docs/audit.md](docs/audit.md).
 
 Design details: [docs/design.md](docs/design.md).
 

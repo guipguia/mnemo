@@ -1,0 +1,21 @@
+# Audit policy for mnemo's user attribution (docs/audit.md). RequestResponse is what lets
+# mnemo match an audit event to the exact version it recorded, so use it only for writes to
+# what mnemo watches. Merge these rules into your own policy: the first matching rule wins.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages: [RequestReceived]
+rules:
+  - level: None  # never log Secret values, whatever comes below
+    resources: [{group: "", resources: [secrets]}]
+  - level: RequestResponse
+    verbs: [create, update, patch, delete]
+    resources:
+      - group: ""
+        resources: [configmaps, services, serviceaccounts]
+      - group: apps
+        resources: [deployments, deployments/scale, statefulsets, statefulsets/scale, daemonsets]
+      - group: networking.k8s.io
+        resources: [ingresses]
+      - group: rbac.authorization.k8s.io
+        resources: [roles, rolebindings, clusterroles, clusterrolebindings]
+  - level: None

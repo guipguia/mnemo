@@ -26,6 +26,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if and (include "mnemo.hasAgent" .) (not .Values.agent.cluster) }}{{ fail "agent.cluster is required: the name this cluster gets in mnemo" }}{{ end }}
 {{- if and (eq .Values.mode "agent") (not .Values.agent.hubURL) }}{{ fail "agent.hubURL is required in mode agent" }}{{ end }}
 {{- if and (eq .Values.mode "agent") (not .Values.token.existingSecret) }}{{ fail "token.existingSecret is required in mode agent: it must hold the hub's token" }}{{ end }}
+{{- if and (include "mnemo.hasAgent" .) .Values.agent.audit.enabled }}
+{{- if not .Values.agent.audit.existingSecret }}{{ fail "agent.audit.existingSecret is required: a Secret with key token, also used in the API server's webhook config" }}{{ end }}
+{{- if not .Values.agent.audit.tlsSecret }}{{ fail "agent.audit.tlsSecret is required: the API server only sends the token over HTTPS" }}{{ end }}
+{{- end }}
 {{- range .Values.agent.watch }}{{ if or (eq . "v1/secrets") (hasSuffix "/secrets" .) }}{{ fail "secrets are never recorded: mnemo would store their values" }}{{ end }}{{ end }}
 {{- with .Values.hub.auth }}
 {{- if not (has .mode (list "none" "oidc" "proxy")) }}{{ fail "hub.auth.mode must be none, oidc, or proxy" }}{{ end }}

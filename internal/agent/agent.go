@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +61,9 @@ type Agent struct {
 	// Push and Resume reach the hub: over HTTP (hub.Client) or in-process (mnemo all).
 	Push   func(context.Context, hub.Batch) error
 	Resume func(ctx context.Context, cluster, uid string) (map[string]string, error)
+	// AuditAddr, if set, is where the agent receives the API server's audit webhook over TLS
+	// (AuditCert, AuditKey). The webhook must send AuditToken as a bearer token.
+	AuditAddr, AuditToken, AuditCert, AuditKey string
 
 	uid string
 }
@@ -80,7 +84,15 @@ func (a *Agent) Run(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	slog.Info("agent started", "cluster", a.Cluster, "uid", a.uid, "resources", len(a.Resources))
+	if a.AuditAddr != "" {
+		// Listen only now: forwarded audit events need the cluster UID.
+		l, err := net.Listen("tcp", a.AuditAddr)
+		if err != nil {
+			return fmt.Errorf("audit webhook: %w", err)
+		}
+		go a.serveAudit(ctx, l)
+	}
+	slog.Info("agent started", "cluster", a.Cluster, "uid", a.uid, "resources", len(a.Resources), "audit", a.AuditAddr)
 
 	var wg sync.WaitGroup
 	for _, gvr := range a.Resources {

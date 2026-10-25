@@ -72,6 +72,25 @@ func attribute(c *store.Change, managers []metav1.ManagedFieldsEntry) {
 	c.Drift = c.Source == "manual" && gitopsManaged(meta, managers)
 }
 
+// attributeUser makes the audited user the author of c. Source still comes from the field
+// manager, except that a person (not a system:* identity) writing through a tool we class as
+// a controller is a manual change, and a delete, which has no field manager, is classified
+// by the client's user agent ("kubectl/v1.31.0 ..." -> kubectl).
+func attributeUser(c *store.Change, a Audit) {
+	c.Author = a.User
+	human := !strings.HasPrefix(a.User, "system:")
+	switch {
+	case human && (c.Source == "controller" || c.Source == "unknown"):
+		c.Source = "manual"
+	case c.Source == "unknown":
+		tool, _, _ := strings.Cut(a.UserAgent, "/")
+		c.Source = classify(tool)
+	}
+	if c.Source == "manual" && c.Object != nil && gitopsManaged(metadata(c.Object), nil) {
+		c.Drift = true
+	}
+}
+
 // useEarlier moves c.Time back to when Kubernetes says the change happened, never forward:
 // a skewed API server clock must not put a change in the future.
 func useEarlier(c *store.Change, t time.Time) {
