@@ -1,0 +1,22 @@
+# kind cluster whose API server sends audit events to mnemo (test/e2e/audit).
+#   kind create cluster --name e2e --config test/e2e/kind.yaml   (from the repo root)
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraMounts:
+      - {hostPath: ./test/e2e/audit, containerPath: /etc/kubernetes/audit, readOnly: true}
+    kubeadmConfigPatches:
+      - |
+        kind: ClusterConfiguration
+        apiServer:
+          extraArgs:
+            audit-policy-file: /etc/kubernetes/audit/policy.yaml
+            audit-webhook-config-file: /etc/kubernetes/audit/webhook.yaml
+            audit-webhook-batch-max-wait: 1s
+          extraVolumes:
+            - name: audit
+              hostPath: /etc/kubernetes/audit
+              mountPath: /etc/kubernetes/audit
+              readOnly: true
+              pathType: Directory

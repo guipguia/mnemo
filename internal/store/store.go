@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS changes (
 CREATE INDEX IF NOT EXISTS changes_cluster_ts   ON changes (cluster, ts);
 CREATE INDEX IF NOT EXISTS changes_namespace_ts ON changes (cluster, namespace, ts);
 CREATE INDEX IF NOT EXISTS changes_object       ON changes (cluster, api_group, kind, namespace, name, ts);
+CREATE INDEX IF NOT EXISTS changes_rv           ON changes (cluster, resource_version);
 CREATE TABLE IF NOT EXISTS clusters (
 	name      TEXT PRIMARY KEY,
 	uid       TEXT    NOT NULL,
@@ -193,6 +194,46 @@ func (s *Store) Record(ctx context.Context, c *Change, listed bool, attribute fu
 		return false, err
 	}
 	return true, tx.Commit()
+}
+
+// Reattribute calls f on every change in cluster to namespace/name written at resourceVersion
+// rv, or deleting the object with UID uid, then saves the Author, Source and Drift that f set.
+// Empty rv or uid match nothing. It reports how many changes it updated: none if the write
+// was never recorded (e.g. a status-only update).
+func (s *Store) Reattribute(ctx context.Context, cluster, namespace, name, rv, uid string, f func(*Change)) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, "SELECT "+cols+`, object FROM changes
+		WHERE cluster = ? AND namespace = ? AND name = ?
+		AND ((? != '' AND resource_version = ?) OR (? != '' AND uid = ? AND type = ?))`,
+		cluster, namespace, name, rv, rv, uid, uid, string(Deleted))
+	if err != nil {
+		return 0, err
+	}
+	var found []Change
+	for rows.Next() {
+		c, err := scan(rows, true)
+		if err != nil {
+			rows.Close()
+			return 0, err
+		}
+		found = append(found, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, c := range found {
+		f(&c)
+		if _, err := tx.ExecContext(ctx, "UPDATE changes SET author = ?, source = ?, drift = ? WHERE id = ?",
+			c.Author, c.Source, c.Drift, c.ID); err != nil {
+			return 0, err
+		}
+	}
+	return len(found), tx.Commit()
 }
 
 // Access is what a caller may see: everything, or the union of Scopes. The zero value sees nothing.

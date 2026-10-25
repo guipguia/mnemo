@@ -2,6 +2,7 @@
 {{- $hub := include "mnemo.hasHub" . }}
 {{- $agent := include "mnemo.hasAgent" . }}
 {{- $auth := .Values.hub.auth }}
+{{- $audit := and $agent .Values.agent.audit.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -63,21 +64,39 @@ spec:
             {{- if eq .Values.mode "agent" }}
             - --hub={{ .Values.agent.hubURL }}
             {{- end }}
+            {{- if $audit }}
+            - --audit-listen=:8443
+            {{- if .Values.agent.audit.tlsSecret }}
+            - --audit-tls-cert=/etc/mnemo/audit-tls/tls.crt
+            - --audit-tls-key=/etc/mnemo/audit-tls/tls.key
+            {{- end }}
+            {{- end }}
             {{- range .Values.extraArgs }}
             - {{ . }}
             {{- end }}
           env:
             - name: MNEMO_TOKEN
               valueFrom: {secretKeyRef: {name: {{ include "mnemo.tokenSecret" . }}, key: token}}
+            {{- if $audit }}
+            - name: MNEMO_AUDIT_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ .Values.agent.audit.existingSecret }}, key: token}}
+            {{- end }}
             {{- if and $hub (eq $auth.mode "oidc") }}
             - name: MNEMO_OIDC_CLIENT_SECRET
               valueFrom: {secretKeyRef: {name: {{ $auth.oidc.existingSecret }}, key: client-secret}}
             - name: MNEMO_SESSION_KEY
               valueFrom: {secretKeyRef: {name: {{ $auth.oidc.existingSecret }}, key: session-key}}
             {{- end }}
-          {{- if $hub }}
+          {{- if or $hub $audit }}
           ports:
+            {{- if $hub }}
             - {name: http, containerPort: 8080}
+            {{- end }}
+            {{- if $audit }}
+            - {name: audit, containerPort: 8443}
+            {{- end }}
+          {{- end }}
+          {{- if $hub }}
           readinessProbe:
             httpGet: {path: /healthz, port: http}
           livenessProbe:
@@ -91,6 +110,9 @@ spec:
           resources: {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
+            {{- if and $audit .Values.agent.audit.tlsSecret }}
+            - {name: audit-tls, mountPath: /etc/mnemo/audit-tls, readOnly: true}
+            {{- end }}
             {{- if $hub }}
             - {name: data, mountPath: /data}
             {{- if ne $auth.mode "none" }}
@@ -99,6 +121,10 @@ spec:
             {{- end }}
       volumes:
         - {name: tmp, emptyDir: {}}
+        {{- if and $audit .Values.agent.audit.tlsSecret }}
+        - name: audit-tls
+          secret: {secretName: {{ .Values.agent.audit.tlsSecret }}}
+        {{- end }}
         {{- if $hub }}
         - name: data
           persistentVolumeClaim: {claimName: {{ include "mnemo.fullname" . }}}

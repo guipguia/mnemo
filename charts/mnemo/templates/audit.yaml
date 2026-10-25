@@ -1,0 +1,21 @@
+{{- if and (include "mnemo.hasAgent" .) .Values.agent.audit.enabled }}
+{{- $svc := .Values.agent.audit.service }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mnemo.fullname" . }}-audit
+  labels: {{- include "mnemo.labels" . | nindent 4 }}
+spec:
+  type: {{ $svc.type }}
+  {{- with $svc.clusterIP }}
+  clusterIP: {{ . }}
+  {{- end }}
+  selector: {{- include "mnemo.selector" . | nindent 4 }}
+  ports:
+    - name: audit
+      port: {{ $svc.port }}
+      targetPort: audit
+      {{- if and (eq $svc.type "NodePort") $svc.nodePort }}
+      nodePort: {{ $svc.nodePort }}
+      {{- end }}
+{{- end }}

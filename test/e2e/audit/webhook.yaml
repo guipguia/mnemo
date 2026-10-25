@@ -1,0 +1,14 @@
+# Where the API server sends audit events: the agent's audit Service. A fixed clusterIP,
+# because the API server can't resolve Service names. Plain HTTP is for this test only.
+apiVersion: v1
+kind: Config
+clusters:
+  - name: mnemo
+    cluster: {server: "http://10.96.200.200:8443"}
+users:
+  - name: kube-apiserver
+    user: {token: e2e-audit-token}
+contexts:
+  - name: mnemo
+    context: {cluster: mnemo, user: kube-apiserver}
+current-context: mnemo

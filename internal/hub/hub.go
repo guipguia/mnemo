@@ -25,6 +25,18 @@ type Batch struct {
 	Items       []Item            `json:"items,omitempty"`
 	Synced      []Synced          `json:"synced,omitempty"`
 	Checkpoints map[string]string `json:"checkpoints,omitempty"` // "group/version/resource" -> resourceVersion
+	Audits      []Audit           `json:"audits,omitempty"`
+}
+
+// Audit is a write seen by the cluster's audit webhook: who wrote namespace/name at
+// ResourceVersion, or who deleted the object with UID (most deletes return no resourceVersion).
+type Audit struct {
+	Namespace       string `json:"namespace"`
+	Name            string `json:"name"`
+	ResourceVersion string `json:"resourceVersion,omitempty"`
+	UID             string `json:"uid,omitempty"` // deletes only
+	User            string `json:"user"`
+	UserAgent       string `json:"userAgent"`
 }
 
 // Item is one observed object. The hub, not the agent, decides authorship: only the hub
@@ -74,6 +86,16 @@ func Ingest(ctx context.Context, s *store.Store, b Batch) error {
 			keep[k] = true
 		}
 		if _, err := s.Prune(ctx, b.Cluster, sy.Group, sy.Kind, keep, sy.Time); err != nil {
+			return err
+		}
+	}
+	// After Items: audit events trail the watch, often by seconds, so the change is usually
+	// recorded already, possibly in this same batch.
+	// ponytail: an audit event that beats its watch event is dropped and the field manager stays
+	// the author; hold unmatched ones for a few minutes if that shows up in practice.
+	for _, a := range b.Audits {
+		if _, err := s.Reattribute(ctx, b.Cluster, a.Namespace, a.Name, a.ResourceVersion, a.UID,
+			func(c *store.Change) { attributeUser(c, a) }); err != nil {
 			return err
 		}
 	}
@@ -168,7 +190,7 @@ func Handler(s *store.Store, token string, access func(*http.Request) store.Acce
 	})
 
 	if token != "" {
-		mux.Handle("POST /api/v1/ingest", auth(token, func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("POST /api/v1/ingest", RequireToken(token, func(w http.ResponseWriter, r *http.Request) {
 			var b Batch
 			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<20)).Decode(&b); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -176,7 +198,7 @@ func Handler(s *store.Store, token string, access func(*http.Request) store.Acce
 			}
 			reply(w)(struct{}{}, Ingest(r.Context(), s, b))
 		}))
-		mux.Handle("GET /api/v1/checkpoints", auth(token, func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("GET /api/v1/checkpoints", RequireToken(token, func(w http.ResponseWriter, r *http.Request) {
 			q := r.URL.Query()
 			reply(w)(Resume(r.Context(), s, q.Get("cluster"), q.Get("uid")))
 		}))
@@ -184,7 +206,8 @@ func Handler(s *store.Store, token string, access func(*http.Request) store.Acce
 	return mux
 }
 
-func auth(token string, next http.HandlerFunc) http.Handler {
+// RequireToken rejects requests without "Authorization: Bearer <token>".
+func RequireToken(token string, next http.HandlerFunc) http.Handler {
 	want := []byte("Bearer " + token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {

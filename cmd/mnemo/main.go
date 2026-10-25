@@ -54,6 +54,7 @@ func run(ctx context.Context, mode string, args []string) error {
 	fs := flag.NewFlagSet(mode, flag.ExitOnError)
 	token := fs.String("token", os.Getenv("MNEMO_TOKEN"), "shared agent/hub token (default $MNEMO_TOKEN)")
 	var db, listen, cluster, hubURL, kubeconfig, resources *string
+	var auditListen, auditToken, auditCert, auditKey *string
 	var retentionDays, retentionVersions *int
 	var newAuth func(context.Context) (*auth.Auth, error)
 	if mode == "hub" || mode == "all" {
@@ -67,6 +68,10 @@ func run(ctx context.Context, mode string, args []string) error {
 		cluster = fs.String("cluster", "", "cluster name shown in mnemo (required)")
 		kubeconfig = fs.String("kubeconfig", "", "kubeconfig path (default: in-cluster config)")
 		resources = fs.String("resources", strings.Join(agent.DefaultResources, ","), "comma-separated group/version/resource list")
+		auditListen = fs.String("audit-listen", "", "receive the API server's audit webhook here, e.g. :8443 (default: off); see docs/audit.md")
+		auditToken = fs.String("audit-token", os.Getenv("MNEMO_AUDIT_TOKEN"), "bearer token the audit webhook must send (default $MNEMO_AUDIT_TOKEN)")
+		auditCert = fs.String("audit-tls-cert", "", "TLS certificate for the audit webhook")
+		auditKey = fs.String("audit-tls-key", "", "TLS key for the audit webhook")
 	}
 	if mode == "agent" {
 		hubURL = fs.String("hub", "", "hub URL (required)")
@@ -117,7 +122,14 @@ func run(ctx context.Context, mode string, args []string) error {
 		if err != nil {
 			return err
 		}
-		ag = &agent.Agent{Client: client, Cluster: *cluster, Resources: gvrs}
+		if *auditListen != "" && *auditToken == "" {
+			return errors.New("--audit-listen needs --audit-token, or anyone could claim to be any user")
+		}
+		if (*auditCert == "") != (*auditKey == "") {
+			return errors.New("--audit-tls-cert and --audit-tls-key go together")
+		}
+		ag = &agent.Agent{Client: client, Cluster: *cluster, Resources: gvrs,
+			AuditAddr: *auditListen, AuditToken: *auditToken, AuditCert: *auditCert, AuditKey: *auditKey}
 		if st != nil {
 			ag.Push = func(ctx context.Context, b hub.Batch) error { return hub.Ingest(ctx, st, b) }
 			ag.Resume = func(ctx context.Context, cluster, uid string) (map[string]string, error) {

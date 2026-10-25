@@ -5,6 +5,7 @@
 #   KUBECONFIG=<throwaway cluster> IMAGE=mnemo:e2e test/e2e/run.sh
 #
 # IMAGE must already be loadable by the cluster (e.g. `kind load docker-image`).
+# AUDIT=1 also tests user attribution: the cluster must come from test/e2e/kind.yaml.
 # Needs kubectl, helm, curl, jq. Uses namespaces mnemo-e2e and shop.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -85,5 +86,26 @@ skew=$(( $(date -u -d "$recorded" +%s) - offline_at ))
 pass "...at the time it happened, not when the hub came back (${skew}s)"
 [ "$(changes "$Q" | jq length)" -gt "$total" ] || fail "history lost across the restart"
 pass "history kept across the restart (PVC)"
+
+if [ "${AUDIT:-}" = 1 ]; then
+  echo "== audit attribution"
+  kubectl -n "$NS" create secret generic mnemo-audit --from-literal=token=e2e-audit-token \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kill "$PF" 2>/dev/null || true
+  helm upgrade mnemo charts/mnemo -n "$NS" --reuse-values --wait --timeout 4m \
+    --set agent.audit.enabled=true --set agent.audit.existingSecret=mnemo-audit \
+    --set agent.audit.service.clusterIP=10.96.200.200 >/dev/null
+  port_forward
+  logs_say() { kubectl -n "$NS" logs deploy/mnemo | grep -q "$1"; }
+  retry logs_say 'audit=:8443' || fail "agent not receiving audit events"
+  # --as: how an access proxy acting for a person shows up in the audit log.
+  as() { kubectl --as "$1" --as-group system:masters -n shop "${@:2}" >/dev/null; }
+  as alice@example.com patch configmap checkout-config --type merge -p '{"data":{"OWNER":"alice"}}'
+  expect "hand-edit attributed to the person, not the field manager" \
+    '.name == "checkout-config" and .paths == ["/data/OWNER"] and .author == "alice@example.com" and .source == "manual" and .drift' "$Q"
+  as bob@example.com delete configmap checkout-config
+  expect "delete attributed to the person who deleted it" \
+    '.name == "checkout-config" and .type == "deleted" and .author == "bob@example.com" and .source == "manual"' "$Q"
+fi
 
 echo "PASS"
