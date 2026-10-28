@@ -20,7 +20,7 @@ Design details: [docs/design.md](docs/design.md).
 - [x] Audit webhook receiver in the agent for user attribution ([docs/audit.md](docs/audit.md))
 - [x] Events archive and rollout correlation on the timeline
 - [ ] Link GitOps changes to Git commits (Argo CD, Flux)
-- [ ] Outbound webhooks on matching changes (filters, retries, HMAC signatures)
+- [x] Outbound webhooks on matching changes (filters, retries, HMAC signatures) ([docs/webhooks.md](docs/webhooks.md))
 - [ ] Grafana annotations integration
 - [x] Retention policy (age / count)
 - [ ] Litestream backup option in the chart

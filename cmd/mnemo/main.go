@@ -28,6 +28,7 @@ import (
 	"github.com/guipguia/mnemo/internal/auth"
 	"github.com/guipguia/mnemo/internal/hub"
 	"github.com/guipguia/mnemo/internal/store"
+	"github.com/guipguia/mnemo/internal/webhook"
 )
 
 // version is set at release build time: -ldflags "-X main.version=v0.1.0".
@@ -53,7 +54,7 @@ func main() {
 func run(ctx context.Context, mode string, args []string) error {
 	fs := flag.NewFlagSet(mode, flag.ExitOnError)
 	token := fs.String("token", os.Getenv("MNEMO_TOKEN"), "shared agent/hub token (default $MNEMO_TOKEN)")
-	var db, listen, cluster, hubURL, kubeconfig, resources *string
+	var db, listen, webhooks, cluster, hubURL, kubeconfig, resources *string
 	var auditListen, auditToken, auditCert, auditKey *string
 	var retentionDays, retentionVersions, eventRetentionDays *int
 	var newAuth func(context.Context) (*auth.Auth, error)
@@ -62,6 +63,7 @@ func run(ctx context.Context, mode string, args []string) error {
 		listen = fs.String("listen", ":8080", "HTTP listen address")
 		retentionDays = fs.Int("retention-days", 0, "delete versions older than this many days (0: keep forever); each object's current state is kept")
 		retentionVersions = fs.Int("retention-versions", 0, "keep at most this many versions per object (0: no limit)")
+		webhooks = fs.String("webhooks", "", "outbound webhooks file (default: none); see docs/webhooks.md")
 		eventRetentionDays = fs.Int("event-retention-days", 30, "delete archived Kubernetes Events last seen this many days ago (0: keep forever)")
 		newAuth = authFlags(fs)
 	}
@@ -84,6 +86,7 @@ func run(ctx context.Context, mode string, args []string) error {
 
 	var st *store.Store
 	var au *auth.Auth
+	var hooks *webhook.Config
 	if db != nil {
 		if mode == "hub" && *token == "" {
 			return errors.New("hub mode needs --token, or agents can't push")
@@ -91,6 +94,11 @@ func run(ctx context.Context, mode string, args []string) error {
 		var err error
 		if au, err = newAuth(ctx); err != nil {
 			return err
+		}
+		if *webhooks != "" {
+			if hooks, err = webhook.Load(*webhooks); err != nil {
+				return err
+			}
 		}
 		if st, err = store.Open(*db); err != nil {
 			return err
@@ -157,7 +165,10 @@ func run(ctx context.Context, mode string, args []string) error {
 			srv.Shutdown(shutdown)
 		}()
 		slog.Info("hub listening", "version", version, "addr", *listen, "db", *db, "ingest", *token != "", "auth", au.Mode(),
-			"retentionDays", *retentionDays, "retentionVersions", *retentionVersions, "eventRetentionDays", *eventRetentionDays)
+			"webhooks", *webhooks, "retentionDays", *retentionDays, "retentionVersions", *retentionVersions, "eventRetentionDays", *eventRetentionDays)
+		if hooks != nil {
+			go webhook.Run(ctx, st, hooks)
+		}
 		if *retentionDays > 0 || *retentionVersions > 0 || *eventRetentionDays > 0 {
 			go expire(ctx, st, *retentionDays, *retentionVersions, *eventRetentionDays)
 		}

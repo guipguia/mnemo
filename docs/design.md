@@ -191,12 +191,16 @@ Enough to say "`DB_PASSWORD` rotated at 14:31".
 ## Outbound webhooks
 
 The hub can POST to configured URLs when it records a change matching a filter
-(cluster, GVK, namespace, name, change type), e.g. "notify Slack when any ClusterRoleBinding
-changes in prod". Payload: object ref, author, timestamp, patch, link to the UI.
+(cluster, namespace, kind, name, change type, source, drift), e.g. "notify Slack when any
+ClusterRoleBinding changes in prod". Payload: the change without its object (ref, author,
+time, changed paths), a link to the UI, and a line of `text`. See [webhooks.md](webhooks.md).
 
-- At-least-once delivery with retries and backoff; receivers dedupe on a change ID.
-- Optional HMAC signature header so receivers can verify the sender.
-- Fired after the change is committed, so a slow receiver never blocks recording.
+- No outbox: each webhook keeps a cursor, the last change ID it delivered, in the database,
+  and walks the change log from there. That is at-least-once and in order, survives
+  restarts, and keeps delivery off the ingest path. Receivers dedupe on the change ID.
+- IDs must only grow, so retention never deletes the newest row (SQLite would reuse its ID).
+- Optional HMAC-SHA256 signature header so receivers can verify the sender.
+- Optional `delay`, so audit attribution (which trails the watch) lands before delivery.
 
 Not to be confused with the inbound audit webhook used for attribution.
 

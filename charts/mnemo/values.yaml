@@ -64,6 +64,11 @@ hub:
     versions: 0
     # Archived Kubernetes Events, by when they were last seen. 0 keeps them forever.
     eventDays: 30
+  # Outbound webhooks on matching changes. Name of a Secret with key "webhooks.yaml"
+  # (it holds receiver URLs and HMAC secrets); empty disables. See docs/webhooks.md.
+  # The hub reads it at startup: restart the pod after changing it.
+  webhooks:
+    secret: ""
   service:
     type: ClusterIP
     port: 80

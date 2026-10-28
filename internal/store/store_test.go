@@ -240,13 +240,13 @@ func TestExpire(t *testing.T) {
 		}
 	}
 	record("old", 0, `{"v":1}`) // only version: kept however old
+	record("gone", 0, `{"v":1}`)
+	record("gone", 1, "") // deleted long ago: dropped entirely
 	record("busy", 0, `{"v":1}`)
 	record("busy", 1, `{"v":2}`)
 	record("busy", 20, `{"v":3}`)
 	record("busy", 21, `{"v":4}`)
 	record("busy", 22, `{"v":5}`)
-	record("gone", 0, `{"v":1}`)
-	record("gone", 1, "") // deleted long ago: dropped entirely
 
 	names := func() map[string]int {
 		cs, err := s.Changes(ctx, Filter{Access: Access{All: true}})
@@ -276,5 +276,16 @@ func TestExpire(t *testing.T) {
 	}
 	if n, _ := s.Expire(ctx, time.Time{}, 0); n != 0 {
 		t.Fatalf("no policy deleted %d rows", n)
+	}
+
+	// The newest change overall survives even as an old tombstone, so its ID is never reused.
+	record("last", 0, `{"v":1}`)
+	record("last", 1, "")
+	last, _ := s.LastID(ctx)
+	if n, err := s.Expire(ctx, day(10), 0); err != nil || n != 1 {
+		t.Fatalf("expire with old newest tombstone: deleted %d, %v; want 1", n, err)
+	}
+	if id, _ := s.LastID(ctx); id != last {
+		t.Fatalf("last ID %d, want %d", id, last)
 	}
 }

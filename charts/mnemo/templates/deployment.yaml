@@ -41,6 +41,9 @@ spec:
             - --retention-days={{ .Values.hub.retention.days }}
             - --retention-versions={{ .Values.hub.retention.versions }}
             - --event-retention-days={{ .Values.hub.retention.eventDays }}
+            {{- if .Values.hub.webhooks.secret }}
+            - --webhooks=/etc/mnemo-webhooks/webhooks.yaml
+            {{- end }}
             {{- if ne $auth.mode "none" }}
             - --policy=/etc/mnemo/policy.yaml
             {{- end }}
@@ -117,6 +120,9 @@ spec:
             {{- if ne $auth.mode "none" }}
             - {name: policy, mountPath: /etc/mnemo, readOnly: true}
             {{- end }}
+            {{- if .Values.hub.webhooks.secret }}
+            - {name: webhooks, mountPath: /etc/mnemo-webhooks, readOnly: true}
+            {{- end }}
             {{- end }}
       volumes:
         - {name: tmp, emptyDir: {}}
@@ -130,6 +136,10 @@ spec:
         {{- if ne $auth.mode "none" }}
         - name: policy
           configMap: {name: {{ include "mnemo.fullname" . }}-policy}
+        {{- end }}
+        {{- if .Values.hub.webhooks.secret }}
+        - name: webhooks
+          secret: {secretName: {{ .Values.hub.webhooks.secret }}}
         {{- end }}
         {{- end }}
       {{- with .Values.nodeSelector }}

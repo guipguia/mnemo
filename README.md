@@ -29,6 +29,8 @@ can reconstruct any object at any point in time, not just get notified that it c
 - **Events archive:** Kubernetes Events are kept past their ~1h lifetime and shown on each
   object's timeline, with a Deployment's ReplicaSet and Pod events next to the change that
   caused them.
+- **Webhooks:** POST matching changes to Slack or your own receiver, signed, at least once
+  and in order. See [docs/webhooks.md](docs/webhooks.md).
 - **Multi-cluster:** one hub, one lightweight agent per cluster. Agents push, so the hub never
   needs credentials for your clusters.
 - **SSO and per-team access:** OIDC (Okta, Entra ID, Google, Keycloak, Dex, ...) or an auth
