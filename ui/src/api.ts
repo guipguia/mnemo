@@ -16,6 +16,18 @@ export type Change = Ref & {
   object?: unknown
 }
 
+// A Kubernetes Event about the object (Ref) or, for workloads, one of its ReplicaSets or Pods.
+export type KubeEvent = Ref & {
+  uid: string
+  type: 'Normal' | 'Warning'
+  reason: string
+  message: string
+  source: string
+  count: number
+  firstTime: string
+  lastTime: string
+}
+
 export type Cluster = { name: string; uid: string; lastSeen: string }
 
 export type Me = {
@@ -52,6 +64,7 @@ export const api = {
   changes: (filter: Params) => get<Change[]>('changes', filter),
   change: (id: number) => get<Change>(`changes/${id}`),
   history: (ref: Ref) => get<Change[]>('history', { ...ref, limit: '1000' }),
+  events: (ref: Ref) => get<KubeEvent[]>('events', { ...ref, limit: '1000' }),
   // null when the object did not exist at that time.
   at: (ref: Ref, time: string) =>
     get<Change>('at', { ...ref, time }).catch((e: Error) => (e.message.startsWith('404') ? null : Promise.reject(e))),
