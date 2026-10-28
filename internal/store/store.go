@@ -46,6 +46,24 @@ CREATE TABLE IF NOT EXISTS clusters (
 	uid       TEXT    NOT NULL,
 	last_seen INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS events (
+	cluster   TEXT    NOT NULL,
+	uid       TEXT    NOT NULL,
+	api_group TEXT    NOT NULL,
+	kind      TEXT    NOT NULL,
+	namespace TEXT    NOT NULL,
+	name      TEXT    NOT NULL,
+	type      TEXT    NOT NULL,
+	reason    TEXT    NOT NULL,
+	message   TEXT    NOT NULL,
+	source    TEXT    NOT NULL,
+	count     INTEGER NOT NULL,
+	first_ts  INTEGER NOT NULL,
+	last_ts   INTEGER NOT NULL,
+	PRIMARY KEY (cluster, uid)
+);
+CREATE INDEX IF NOT EXISTS events_cluster_ts ON events (cluster, last_ts);
+CREATE INDEX IF NOT EXISTS events_object     ON events (cluster, namespace, name, last_ts);
 CREATE TABLE IF NOT EXISTS checkpoints (
 	cluster          TEXT NOT NULL,
 	resource         TEXT NOT NULL,

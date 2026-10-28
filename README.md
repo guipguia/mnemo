@@ -26,6 +26,9 @@ can reconstruct any object at any point in time, not just get notified that it c
 - **Time travel:** any object's full history, YAML diffs between versions, and its exact
   state at any moment.
 - **Day-one value:** on install, every object is recorded with who last touched it.
+- **Events archive:** Kubernetes Events are kept past their ~1h lifetime and shown on each
+  object's timeline, with a Deployment's ReplicaSet and Pod events next to the change that
+  caused them.
 - **Multi-cluster:** one hub, one lightweight agent per cluster. Agents push, so the hub never
   needs credentials for your clusters.
 - **SSO and per-team access:** OIDC (Okta, Entra ID, Google, Keycloak, Dex, ...) or an auth
@@ -64,6 +67,7 @@ history. All options: [charts/mnemo/values.yaml](charts/mnemo/values.yaml).
 History lives in SQLite on a PersistentVolume (block storage, not NFS), kept on
 `helm uninstall`, and is kept forever by default. Cap it with `hub.retention.days` and
 `hub.retention.versions` (per object); each object's current state is never expired.
+Archived Events expire after `hub.retention.eventDays` (30 by default).
 
 **Try it:** [`demo/incident.sh`](demo/incident.sh) replays the incident from the GIF on any
 cluster mnemo watches: an Argo CD-managed app, then someone hot-fixing it by hand.

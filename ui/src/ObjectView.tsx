@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { stringify } from 'yaml'
-import { api, type Change, type Ref } from './api'
+import { api, type Change, type KubeEvent, type Ref } from './api'
 import { Author, Paths, TypeBadge } from './Badges'
 import { Diff } from './Diff'
 import { ago, fmtTime, fromLocalInput, toLocalInput, type Nav } from './url'
@@ -20,14 +20,21 @@ export function ObjectView({ q, nav }: { q: URLSearchParams; nav: Nav }) {
   const go = (p: { change?: string; at?: string }) => nav({ ...ref, ...p })
 
   const [history, setHistory] = useState<Change[] | null>(null)
+  const [events, setEvents] = useState<KubeEvent[]>([])
   const [error, setError] = useState('')
   useEffect(() => {
     api.history(ref).then(setHistory, (e) => setError(e.message))
+    api.events(ref).then(setEvents, () => setEvents([])) // the timeline still works without them
   }, [ref.cluster, ref.group, ref.kind, ref.namespace, ref.name])
 
   const idx = history ? Math.max(0, history.findIndex((c) => String(c.id) === q.get('change'))) : -1
   const selected = history?.[idx]
   const previous = history?.[idx + 1]
+  // Newest first. Date.parse, not string order: Go trims trailing zeros from fractional seconds.
+  const rows: { t: number; c?: Change; i?: number; e?: KubeEvent }[] = [
+    ...(history ?? []).map((c, i) => ({ t: Date.parse(c.time), c, i })),
+    ...events.map((e) => ({ t: Date.parse(e.lastTime), e })),
+  ].sort((a, b) => b.t - a.t)
 
   return (
     <div className="object">
@@ -50,19 +57,23 @@ export function ObjectView({ q, nav }: { q: URLSearchParams; nav: Nav }) {
             <input type="datetime-local" step="1" value={toLocalInput(at)} onChange={(e) => go({ at: fromLocalInput(e.target.value) })} />
           </label>
           <ol>
-            {history?.map((c, i) => (
-              <li key={c.id} className={!at && i === idx ? 'selected' : ''}>
-                <button onClick={() => go({ change: String(c.id) })}>
-                  <span className="when" title={c.time}>
-                    {fmtTime(c.time)} <span className="ago">{ago(c.time)}</span>
-                  </span>
-                  <span>
-                    <TypeBadge c={c} /> <Author c={c} />
-                  </span>
-                  <Paths paths={c.paths} max={2} />
-                </button>
-              </li>
-            ))}
+            {rows.map(({ c, i, e }) =>
+              c ? (
+                <li key={c.id} className={!at && i === idx ? 'selected' : ''}>
+                  <button onClick={() => go({ change: String(c.id) })}>
+                    <span className="when" title={c.time}>
+                      {fmtTime(c.time)} <span className="ago">{ago(c.time)}</span>
+                    </span>
+                    <span>
+                      <TypeBadge c={c} /> <Author c={c} />
+                    </span>
+                    <Paths paths={c.paths} max={2} />
+                  </button>
+                </li>
+              ) : (
+                e && <EventRow key={e.uid} e={e} self={e.kind === ref.kind && e.name === ref.name} />
+              ),
+            )}
           </ol>
           {history?.length === 1000 && <p className="warn">Showing the newest 1000 versions.</p>}
         </aside>
@@ -78,6 +89,22 @@ export function ObjectView({ q, nav }: { q: URLSearchParams; nav: Nav }) {
         </section>
       </div>
     </div>
+  )
+}
+
+function EventRow({ e, self }: { e: KubeEvent; self: boolean }) {
+  return (
+    <li className={`event ${e.type === 'Warning' ? 'warning' : ''}`} title={`${e.source}, first seen ${fmtTime(e.firstTime)}`}>
+      <span className="when">
+        {fmtTime(e.lastTime)} <span className="ago">{ago(e.lastTime)}</span>
+      </span>
+      <span>
+        <span className="badge">{e.reason}</span>
+        {e.count > 1 && <span className="count"> ×{e.count}</span>}
+        {!self && <span className="kind"> {e.kind} {e.name}</span>}
+      </span>
+      <span className="message">{e.message}</span>
+    </li>
   )
 }
 

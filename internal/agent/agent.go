@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/dynamic"
 
 	"github.com/guipguia/mnemo/internal/hub"
+	"github.com/guipguia/mnemo/internal/store"
 )
 
 // DefaultResources is what an agent watches unless told otherwise.
@@ -28,6 +29,7 @@ var DefaultResources = []string{
 	"networking.k8s.io/v1/ingresses",
 	"rbac.authorization.k8s.io/v1/roles", "rbac.authorization.k8s.io/v1/rolebindings",
 	"rbac.authorization.k8s.io/v1/clusterroles", "rbac.authorization.k8s.io/v1/clusterrolebindings",
+	"v1/events",
 }
 
 // ParseResource parses "group/version/resource" or "version/resource" (core group).
@@ -153,7 +155,14 @@ func (a *Agent) consume(ctx context.Context, gvr schema.GroupVersionResource, w 
 			return rv, fmt.Errorf("unexpected watch object %T", ev.Object)
 		}
 		b := hub.Batch{Checkpoints: map[string]string{key(gvr): u.GetResourceVersion()}}
-		if ev.Type != watch.Bookmark {
+		switch {
+		case ev.Type == watch.Bookmark:
+		case gvr == eventsGVR:
+			// An Event's deletion is the API server expiring it: the archive keeps it.
+			if ev.Type != watch.Deleted {
+				b.Events = []store.Event{toEvent(u)}
+			}
+		default:
 			it, err := toItem(u, false, ev.Type == watch.Deleted, time.Now())
 			if err != nil {
 				return rv, err
@@ -176,6 +185,21 @@ func (a *Agent) relist(ctx context.Context, gvr schema.GroupVersionResource) (st
 	if err != nil {
 		return "", err
 	}
+	rv := list.GetResourceVersion()
+	if gvr == eventsGVR {
+		// Archived, not mirrored: no Synced, so expired events stay in the hub.
+		evs := make([]store.Event, 0, len(list.Items))
+		for i := range list.Items {
+			evs = append(evs, toEvent(&list.Items[i]))
+		}
+		for len(evs) > 500 {
+			if err := a.push(ctx, hub.Batch{Events: evs[:500]}); err != nil {
+				return "", err
+			}
+			evs = evs[500:]
+		}
+		return rv, a.push(ctx, hub.Batch{Events: evs, Checkpoints: map[string]string{key(gvr): rv}})
+	}
 	now := time.Now()
 	items := make([]hub.Item, 0, len(list.Items))
 	keep := make([]string, 0, len(list.Items))
@@ -193,7 +217,6 @@ func (a *Agent) relist(ctx context.Context, gvr schema.GroupVersionResource) (st
 		}
 		items = items[500:]
 	}
-	rv := list.GetResourceVersion()
 	err = a.push(ctx, hub.Batch{
 		Items:       items,
 		Synced:      []hub.Synced{{Group: gvr.Group, Kind: strings.TrimSuffix(list.GetKind(), "List"), Keep: keep, Time: now}},
