@@ -64,6 +64,10 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_cluster_ts ON events (cluster, last_ts);
 CREATE INDEX IF NOT EXISTS events_object     ON events (cluster, namespace, name, last_ts);
+CREATE TABLE IF NOT EXISTS webhook_cursors (
+	name    TEXT PRIMARY KEY,
+	last_id INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS checkpoints (
 	cluster          TEXT NOT NULL,
 	resource         TEXT NOT NULL,
@@ -395,6 +399,35 @@ func (s *Store) Changes(ctx context.Context, f Filter) ([]Change, error) {
 	return s.list(ctx, q+" ORDER BY ts DESC, id DESC LIMIT ?", append(args, min(limit, 1000))...)
 }
 
+// After lists changes with after < id <= upto in ID order (the order they were recorded),
+// without object bodies.
+func (s *Store) After(ctx context.Context, after, upto int64, limit int) ([]Change, error) {
+	return s.list(ctx, "SELECT "+cols+" FROM changes WHERE id > ? AND id <= ? ORDER BY id LIMIT ?", after, upto, limit)
+}
+
+// LastID is the ID of the newest change, or 0 if there are none.
+func (s *Store) LastID(ctx context.Context) (int64, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx, "SELECT COALESCE(MAX(id), 0) FROM changes").Scan(&id)
+	return id, err
+}
+
+// WebhookCursor returns the last change ID delivered to webhook name, and false if it has none yet.
+func (s *Store) WebhookCursor(ctx context.Context, name string) (int64, bool, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx, "SELECT last_id FROM webhook_cursors WHERE name = ?", name).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return id, err == nil, err
+}
+
+func (s *Store) SetWebhookCursor(ctx context.Context, name string, id int64) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO webhook_cursors (name, last_id) VALUES (?, ?)
+		ON CONFLICT (name) DO UPDATE SET last_id = excluded.last_id`, name, id)
+	return err
+}
+
 // History lists an object's versions, newest first, without object bodies.
 func (s *Store) History(ctx context.Context, r Ref, limit int) ([]Change, error) {
 	if limit <= 0 {
@@ -465,6 +498,8 @@ func (s *Store) Prune(ctx context.Context, cluster, group, kind string, keep map
 // Expire deletes versions older than before (if non-zero) and all but the newest maxVersions
 // versions of each object (if > 0), and reports how many rows it deleted. An object's newest
 // version is always kept, so current state survives, unless it is a deletion older than before.
+// The newest change overall is always kept too: SQLite would reuse its ID, and webhook
+// cursors rely on IDs only growing.
 func (s *Store) Expire(ctx context.Context, before time.Time, maxVersions int) (int64, error) {
 	cut := int64(0) // ts < 0 matches nothing
 	if !before.IsZero() {
@@ -476,7 +511,8 @@ func (s *Store) Expire(ctx context.Context, before time.Time, maxVersions int) (
 				PARTITION BY cluster, api_group, kind, namespace, name ORDER BY id DESC) AS n
 			FROM changes)
 		DELETE FROM changes WHERE id IN (SELECT id FROM ranked
-			WHERE (n > 1 AND (ts < ? OR (? > 0 AND n > ?))) OR (n = 1 AND type = ? AND ts < ?))`,
+			WHERE (n > 1 AND (ts < ? OR (? > 0 AND n > ?))) OR (n = 1 AND type = ? AND ts < ?))
+		AND id != (SELECT MAX(id) FROM changes)`,
 		cut, maxVersions, maxVersions, string(Deleted), cut)
 	if err != nil {
 		return 0, err
