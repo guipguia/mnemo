@@ -39,7 +39,10 @@ func TestHandler(t *testing.T) {
 			Time: t0, Object: json.RawMessage(`{"data":{"a":"1"}}`),
 		},
 		Managers: []metav1.ManagedFieldsEntry{{Manager: "kubectl-create"}},
-	}}, Checkpoints: map[string]string{"v1/configmaps": "42"}}
+	}}, Checkpoints: map[string]string{"v1/configmaps": "42"}, Events: []store.Event{{
+		Ref: store.Ref{Kind: "ConfigMap", Namespace: "shop", Name: "cfg"}, UID: "ev-1",
+		Type: "Warning", Reason: "Invalid", Count: 1, FirstTime: t0, LastTime: t0,
+	}}}
 
 	post := func(token string, b Batch) int {
 		body, _ := json.Marshal(b)
@@ -81,6 +84,10 @@ func TestHandler(t *testing.T) {
 	if code := get("/api/v1/changes?cluster=prod&source=manual", &feed); code != 200 || len(feed) != 1 || feed[0].Type != store.Added {
 		t.Fatalf("feed: %d %+v", code, feed)
 	}
+	var evs []store.Event
+	if code := get("/api/v1/events?cluster=prod&kind=ConfigMap&namespace=shop&name=cfg&type=Warning", &evs); code != 200 || len(evs) != 1 || evs[0].Cluster != "prod" {
+		t.Fatalf("events: %d %+v", code, evs)
+	}
 	var c store.Change
 	if code := get("/api/v1/at?cluster=prod&kind=ConfigMap&namespace=shop&name=cfg&time=2026-10-20T14:31:00Z", &c); code != 200 || string(c.Object) != `{"data":{"a":"1"}}` {
 		t.Fatalf("at: %d %s", code, c.Object)
@@ -105,6 +112,7 @@ func TestHandler(t *testing.T) {
 	}
 	for path, want := range map[string]string{
 		"/api/v1/changes":  "[]",
+		"/api/v1/events":   "[]",
 		"/api/v1/clusters": `[{"name":"prod"`, // cluster visible: namespace "other" may exist there
 		"/api/v1/history?cluster=prod&kind=ConfigMap&namespace=shop&name=cfg": "[]",
 	} {

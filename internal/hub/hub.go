@@ -26,6 +26,7 @@ type Batch struct {
 	Synced      []Synced          `json:"synced,omitempty"`
 	Checkpoints map[string]string `json:"checkpoints,omitempty"` // "group/version/resource" -> resourceVersion
 	Audits      []Audit           `json:"audits,omitempty"`
+	Events      []store.Event     `json:"events,omitempty"`
 }
 
 // Audit is a write seen by the cluster's audit webhook: who wrote namespace/name at
@@ -96,6 +97,11 @@ func Ingest(ctx context.Context, s *store.Store, b Batch) error {
 	for _, a := range b.Audits {
 		if _, err := s.Reattribute(ctx, b.Cluster, a.Namespace, a.Name, a.ResourceVersion, a.UID,
 			func(c *store.Change) { attributeUser(c, a) }); err != nil {
+			return err
+		}
+	}
+	if len(b.Events) > 0 {
+		if err := s.RecordEvents(ctx, b.Cluster, b.Events); err != nil {
 			return err
 		}
 	}
@@ -170,6 +176,26 @@ func Handler(s *store.Store, token string, access func(*http.Request) store.Acce
 		} else {
 			reply(w)([]store.Change{}, nil) // same as an object with no history
 		}
+	})
+
+	mux.HandleFunc("GET /api/v1/events", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		f := store.EventFilter{
+			Access:  access(r),
+			Cluster: q.Get("cluster"), Group: q.Get("group"), Kind: q.Get("kind"),
+			Namespace: q.Get("namespace"), Name: q.Get("name"), Type: q.Get("type"),
+		}
+		var err error
+		if f.Since, err = parseTime(q, "since"); err == nil {
+			if f.Until, err = parseTime(q, "until"); err == nil {
+				f.Limit, err = parseInt(q, "limit")
+			}
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		reply(w)(s.Events(r.Context(), f))
 	})
 
 	mux.HandleFunc("GET /api/v1/at", func(w http.ResponseWriter, r *http.Request) {
