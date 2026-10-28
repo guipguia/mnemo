@@ -55,13 +55,14 @@ func run(ctx context.Context, mode string, args []string) error {
 	token := fs.String("token", os.Getenv("MNEMO_TOKEN"), "shared agent/hub token (default $MNEMO_TOKEN)")
 	var db, listen, cluster, hubURL, kubeconfig, resources *string
 	var auditListen, auditToken, auditCert, auditKey *string
-	var retentionDays, retentionVersions *int
+	var retentionDays, retentionVersions, eventRetentionDays *int
 	var newAuth func(context.Context) (*auth.Auth, error)
 	if mode == "hub" || mode == "all" {
 		db = fs.String("db", "mnemo.db", "SQLite database path")
 		listen = fs.String("listen", ":8080", "HTTP listen address")
 		retentionDays = fs.Int("retention-days", 0, "delete versions older than this many days (0: keep forever); each object's current state is kept")
 		retentionVersions = fs.Int("retention-versions", 0, "keep at most this many versions per object (0: no limit)")
+		eventRetentionDays = fs.Int("event-retention-days", 30, "delete archived Kubernetes Events last seen this many days ago (0: keep forever)")
 		newAuth = authFlags(fs)
 	}
 	if mode == "agent" || mode == "all" {
@@ -156,9 +157,9 @@ func run(ctx context.Context, mode string, args []string) error {
 			srv.Shutdown(shutdown)
 		}()
 		slog.Info("hub listening", "version", version, "addr", *listen, "db", *db, "ingest", *token != "", "auth", au.Mode(),
-			"retentionDays", *retentionDays, "retentionVersions", *retentionVersions)
-		if *retentionDays > 0 || *retentionVersions > 0 {
-			go expire(ctx, st, *retentionDays, *retentionVersions)
+			"retentionDays", *retentionDays, "retentionVersions", *retentionVersions, "eventRetentionDays", *eventRetentionDays)
+		if *retentionDays > 0 || *retentionVersions > 0 || *eventRetentionDays > 0 {
+			go expire(ctx, st, *retentionDays, *retentionVersions, *eventRetentionDays)
 		}
 		if au.Mode() == "none" && !loopback(*listen) {
 			slog.Warn("--auth none on a non-loopback address: anyone who can reach the hub sees all history")
@@ -176,7 +177,7 @@ func run(ctx context.Context, mode string, args []string) error {
 }
 
 // expire applies the retention policy at startup and then hourly.
-func expire(ctx context.Context, st *store.Store, days, versions int) {
+func expire(ctx context.Context, st *store.Store, days, versions, eventDays int) {
 	for {
 		var before time.Time
 		if days > 0 {
@@ -186,6 +187,13 @@ func expire(ctx context.Context, st *store.Store, days, versions int) {
 			slog.Error("retention", "err", err)
 		} else if n > 0 {
 			slog.Info("retention: deleted old versions", "rows", n)
+		}
+		if eventDays > 0 {
+			if n, err := st.ExpireEvents(ctx, time.Now().AddDate(0, 0, -eventDays)); err != nil {
+				slog.Error("event retention", "err", err)
+			} else if n > 0 {
+				slog.Info("retention: deleted old events", "rows", n)
+			}
 		}
 		select {
 		case <-ctx.Done():

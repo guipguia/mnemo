@@ -40,6 +40,7 @@ spec:
             - --auth={{ $auth.mode }}
             - --retention-days={{ .Values.hub.retention.days }}
             - --retention-versions={{ .Values.hub.retention.versions }}
+            - --event-retention-days={{ .Values.hub.retention.eventDays }}
             {{- if ne $auth.mode "none" }}
             - --policy=/etc/mnemo/policy.yaml
             {{- end }}
