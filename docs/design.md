@@ -175,9 +175,18 @@ Enough to say "`DB_PASSWORD` rotated at 14:31".
 
 ## Events and rollouts
 
-- Kubernetes Events expire after ~1h; mnemo keeps them in an append-only table with its own retention.
-- Rollouts: Deployment → ReplicaSet → Pod via `ownerReferences` and the
-  `deployment.kubernetes.io/revision` annotation, shown on the same timeline as config changes.
+- Kubernetes Events expire after ~1h. The agent watches `v1/events` like any other resource
+  (so the generated ClusterRole covers it, and dropping it from the watch list turns it off),
+  but sends them to an `events` table instead of the diff pipeline.
+- Archived, not mirrored: one row per Event UID, updated as the API server bumps its count.
+  An Event's deletion (its TTL) is ignored, and a relist never prunes. Own retention
+  (`--event-retention-days`, 30 by default), on when the event was last seen.
+- Rollouts: an object's timeline shows its own events plus its children's. Events only name
+  their object, so children are found by the names their controllers give them: a
+  Deployment's ReplicaSets are `<name>-<pod-template-hash>` and their Pods add a 5-character
+  suffix; a StatefulSet's Pods are `<name>-<ordinal>`; a DaemonSet's `<name>-<suffix>`. The
+  hash alphabet makes collisions with unrelated objects rare but possible; watching
+  ReplicaSets and following `ownerReferences` would make it exact.
 
 ## Outbound webhooks
 
