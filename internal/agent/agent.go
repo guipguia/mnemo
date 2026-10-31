@@ -163,11 +163,15 @@ func (a *Agent) consume(ctx context.Context, gvr schema.GroupVersionResource, w 
 				b.Events = []store.Event{toEvent(u)}
 			}
 		default:
-			it, err := toItem(u, false, ev.Type == watch.Deleted, time.Now())
+			now := time.Now()
+			it, err := toItem(u, false, ev.Type == watch.Deleted, now)
 			if err != nil {
 				return rv, err
 			}
 			b.Items = []hub.Item{it}
+			if ev.Type != watch.Deleted {
+				b.Deploys = toDeploys(gvr, u, now)
+			}
 		}
 		// ponytail: one push per event; batch when the hub becomes the bottleneck.
 		if err := a.push(ctx, b); err != nil {
@@ -203,12 +207,14 @@ func (a *Agent) relist(ctx context.Context, gvr schema.GroupVersionResource) (st
 	now := time.Now()
 	items := make([]hub.Item, 0, len(list.Items))
 	keep := make([]string, 0, len(list.Items))
+	var deploys []store.Deploy
 	for i := range list.Items {
 		it, err := toItem(&list.Items[i], true, false, now)
 		if err != nil {
 			return "", err
 		}
 		items = append(items, it)
+		deploys = append(deploys, toDeploys(gvr, &list.Items[i], now)...)
 		keep = append(keep, it.Namespace+"/"+it.Name)
 	}
 	for len(items) > 500 {
@@ -219,6 +225,7 @@ func (a *Agent) relist(ctx context.Context, gvr schema.GroupVersionResource) (st
 	}
 	err = a.push(ctx, hub.Batch{
 		Items:       items,
+		Deploys:     deploys,
 		Synced:      []hub.Synced{{Group: gvr.Group, Kind: strings.TrimSuffix(list.GetKind(), "List"), Keep: keep, Time: now}},
 		Checkpoints: map[string]string{key(gvr): rv},
 	})
