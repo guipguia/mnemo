@@ -3,6 +3,7 @@
 {{- $agent := include "mnemo.hasAgent" . }}
 {{- $auth := .Values.hub.auth }}
 {{- $audit := and $agent .Values.agent.audit.enabled }}
+{{- $backup := and $hub .Values.hub.backup.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -18,6 +19,7 @@ spec:
       labels: {{- include "mnemo.selector" . | nindent 8 }}
       annotations:
         checksum/policy: {{ toYaml $auth.policy | sha256sum }}
+        checksum/backup: {{ .Values.hub.backup.url | sha256sum }}
         {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
     spec:
       serviceAccountName: {{ include "mnemo.fullname" . }}
@@ -28,6 +30,19 @@ spec:
         runAsGroup: 65532
         fsGroup: 65532
         seccompProfile: {type: RuntimeDefault}
+      {{- if $backup }}
+      {{- $ls := dict "image" .Values.hub.backup.image "secret" .Values.hub.backup.existingSecret "resources" .Values.hub.backup.resources }}
+      initContainers:
+        # Empty volume: restore the latest replica, if there is one, before the hub opens the database.
+        - name: restore
+          {{- include "mnemo.litestream" $ls | nindent 10 }}
+          args: [restore, -config, /etc/litestream/litestream.yml, -if-db-not-exists, -if-replica-exists, /data/mnemo.db]
+        # Native sidecar: starts before the hub and stops after it, so the last writes are shipped.
+        - name: litestream
+          restartPolicy: Always
+          {{- include "mnemo.litestream" $ls | nindent 10 }}
+          args: [replicate, -config, /etc/litestream/litestream.yml]
+      {{- end }}
       containers:
         - name: mnemo
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -140,6 +155,10 @@ spec:
         {{- if .Values.hub.webhooks.secret }}
         - name: webhooks
           secret: {secretName: {{ .Values.hub.webhooks.secret }}}
+        {{- end }}
+        {{- if $backup }}
+        - name: litestream
+          configMap: {name: {{ include "mnemo.fullname" . }}-litestream}
         {{- end }}
         {{- end }}
       {{- with .Values.nodeSelector }}

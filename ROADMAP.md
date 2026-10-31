@@ -23,7 +23,7 @@ Design details: [docs/design.md](docs/design.md).
 - [x] Outbound webhooks on matching changes (filters, retries, HMAC signatures) ([docs/webhooks.md](docs/webhooks.md))
 - [ ] Grafana annotations integration
 - [x] Retention policy (age / count)
-- [ ] Litestream backup option in the chart
+- [x] Litestream backup option in the chart
 - [ ] `kubectl mnemo` plugin
 - [x] Release supply chain: cosign signatures, SBOM, SLSA provenance
 

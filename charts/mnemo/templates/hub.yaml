@@ -72,3 +72,17 @@ spec:
                 port: {name: http}
 {{- end }}
 {{- end }}
+{{- if and (include "mnemo.hasHub" .) .Values.hub.backup.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mnemo.fullname" . }}-litestream
+  labels: {{- include "mnemo.labels" . | nindent 4 }}
+data:
+  litestream.yml: |
+    dbs:
+      - path: /data/mnemo.db
+        replica:
+          url: {{ .Values.hub.backup.url | quote }}
+{{- end }}

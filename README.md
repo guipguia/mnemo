@@ -70,6 +70,9 @@ History lives in SQLite on a PersistentVolume (block storage, not NFS), kept on
 `helm uninstall`, and is kept forever by default. Cap it with `hub.retention.days` and
 `hub.retention.versions` (per object); each object's current state is never expired.
 Archived Events expire after `hub.retention.eventDays` (30 by default).
+For backups, `hub.backup.*` adds a [Litestream](https://litestream.io) sidecar that streams
+the database to S3, GCS, Azure Blob or SFTP; on an empty volume the hub restores from it
+before starting.
 
 **Try it:** [`demo/incident.sh`](demo/incident.sh) replays the incident from the GIF on any
 cluster mnemo watches: an Argo CD-managed app, then someone hot-fixing it by hand.

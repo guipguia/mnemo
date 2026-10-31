@@ -158,7 +158,9 @@ delete and re-create is one timeline. Change types: `baseline` (first seen in a 
 - Block storage only (EBS, PD, Azure Disk). Never NFS/EFS/Azure Files: unreliable locking corrupts SQLite.
 - Single writer → hub runs 1 replica. Postgres/MySQL lift this and enable HA.
 - Helm chart sets `helm.sh/resource-policy: keep` on the PVC so uninstall doesn't delete history.
-- Backups: optional Litestream sidecar replicating to S3/GCS/Azure Blob, restore on start.
+- Backups: optional Litestream sidecar (`hub.backup.*`) replicating to S3/GCS/Azure Blob/SFTP.
+  An init container restores the latest replica when the volume has no database, then the
+  sidecar (a native sidecar, so it outlives the hub on shutdown) replicates continuously.
 
 | Event | SQLite data survives? |
 |---|---|
