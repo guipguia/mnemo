@@ -117,6 +117,7 @@ table.feed { width: 100%; min-width: 760px; border-collapse: collapse; backgroun
 .timeline li.event.warning { background: var(--warn-bg); }
 .timeline li.event.warning .badge { color: var(--warn); }
 .event .message { color: var(--text); word-break: break-word; }
+.commit code, .commit a { font-family: var(--mono); font-size: 12px; }
 .when { font-family: var(--mono); font-size: 12px; }
 .ago { color: var(--muted); }
 
