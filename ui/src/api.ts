@@ -14,7 +14,11 @@ export type Change = Ref & {
   drift: boolean
   paths?: string[]
   object?: unknown
+  commit?: Commit // GitOps changes only, from GET changes/{id}
 }
+
+// The Argo CD Application or Flux Kustomization sync that made a change.
+export type Commit = { kind: string; namespace: string; name: string; revision: string; repo?: string; url?: string }
 
 // A Kubernetes Event about the object (Ref) or, for workloads, one of its ReplicaSets or Pods.
 export type KubeEvent = Ref & {

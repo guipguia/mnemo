@@ -35,6 +35,10 @@ agent:
     - rbac.authorization.k8s.io/v1/clusterrolebindings
     # Kubernetes Events, archived past their ~1h lifetime and shown on object timelines.
     - v1/events
+    # GitOps apps: uncomment the ones installed here to link GitOps changes to the Git
+    # revision that made them (the CRDs must exist, or the agent keeps retrying).
+    # - argoproj.io/v1alpha1/applications
+    # - kustomize.toolkit.fluxcd.io/v1/kustomizations
   # Who made each change, from the API server's audit webhook. Needs API server flags,
   # so self-managed clusters only. See docs/audit.md.
   audit:

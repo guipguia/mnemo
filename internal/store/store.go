@@ -64,6 +64,19 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_cluster_ts ON events (cluster, last_ts);
 CREATE INDEX IF NOT EXISTS events_object     ON events (cluster, namespace, name, last_ts);
+CREATE TABLE IF NOT EXISTS deploys (
+	cluster   TEXT    NOT NULL,
+	kind      TEXT    NOT NULL,
+	namespace TEXT    NOT NULL,
+	name      TEXT    NOT NULL,
+	key       TEXT    NOT NULL,
+	revision  TEXT    NOT NULL,
+	repo      TEXT    NOT NULL,
+	start_ts  INTEGER NOT NULL,
+	end_ts    INTEGER NOT NULL,
+	PRIMARY KEY (cluster, kind, namespace, name, key)
+);
+CREATE INDEX IF NOT EXISTS deploys_app ON deploys (cluster, kind, name, end_ts);
 CREATE TABLE IF NOT EXISTS webhook_cursors (
 	name    TEXT PRIMARY KEY,
 	last_id INTEGER NOT NULL
