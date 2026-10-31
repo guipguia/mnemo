@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -38,6 +39,10 @@ import (
 //	  match:
 //	    clusters: [prod]
 //	    kinds: [ClusterRoleBinding, ClusterRole]
+//	- name: grafana
+//	  url: https://grafana.example.com/api/annotations
+//	  format: grafana                    # post Grafana annotations, not the mnemo payload
+//	  token: glsa_...                    # sent as a bearer token
 type Config struct {
 	URL      string    `json:"url,omitempty"`
 	Webhooks []Webhook `json:"webhooks"`
@@ -47,6 +52,8 @@ type Webhook struct {
 	Name   string          `json:"name"`
 	URL    string          `json:"url"`
 	Secret string          `json:"secret,omitempty"`
+	Token  string          `json:"token,omitempty"`
+	Format string          `json:"format,omitempty"` // empty (the mnemo payload) or "grafana"
 	Delay  metav1.Duration `json:"delay,omitempty"`
 	Match  Match           `json:"match"`
 }
@@ -88,6 +95,10 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("webhooks %s: webhook %d: name must be set and unique", path, i+1)
 		case err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "":
 			return nil, fmt.Errorf("webhooks %s: %s: url must be http(s)://host/...", path, w.Name)
+		case w.Format != "" && w.Format != formatGrafana:
+			return nil, fmt.Errorf("webhooks %s: %s: format %q: want grafana or nothing", path, w.Name, w.Format)
+		case w.Format == formatGrafana && w.Token == "":
+			return nil, fmt.Errorf("webhooks %s: %s: format grafana needs a token", path, w.Name)
 		}
 		for _, p := range slices.Concat(w.Match.Clusters, w.Match.Namespaces) {
 			if p == "" || strings.Contains(strings.TrimSuffix(p, "*"), "*") {
@@ -110,6 +121,31 @@ type Payload struct {
 	store.Change
 	Link string `json:"link,omitempty"`
 	Text string `json:"text"`
+}
+
+const formatGrafana = "grafana"
+
+// annotation is the body of Grafana's POST /api/annotations. With no dashboard set it is an
+// organization annotation, which dashboards select by tag.
+type annotation struct {
+	Time int64    `json:"time"` // epoch milliseconds
+	Tags []string `json:"tags"`
+	Text string   `json:"text"` // Grafana renders sanitized HTML
+}
+
+func newAnnotation(c store.Change, link string) annotation {
+	a := annotation{Time: c.Time.UnixMilli(), Text: html.EscapeString(text(c)),
+		Tags: []string{"mnemo", "cluster:" + c.Cluster, "kind:" + c.Kind, "type:" + string(c.Type), "source:" + c.Source}}
+	if c.Namespace != "" {
+		a.Tags = append(a.Tags, "namespace:"+c.Namespace)
+	}
+	if c.Drift {
+		a.Tags = append(a.Tags, "drift")
+	}
+	if link != "" {
+		a.Text += ` <a href="` + html.EscapeString(link) + `">Open in mnemo</a>`
+	}
+	return a
 }
 
 // Run delivers to every webhook until ctx is done.
@@ -191,14 +227,22 @@ func (w Webhook) run(ctx context.Context, st *store.Store, base string, client *
 
 // deliver posts c until the receiver answers 2xx, and reports false if ctx ended first.
 func (w Webhook) deliver(ctx context.Context, client *http.Client, base string, c store.Change, log *slog.Logger) bool {
-	p := Payload{Change: c, Text: text(c)}
+	var link string
 	if base != "" {
 		q := url.Values{"cluster": {c.Cluster}, "group": {c.Group}, "kind": {c.Kind},
 			"namespace": {c.Namespace}, "name": {c.Name}, "change": {strconv.FormatInt(c.ID, 10)}}
-		p.Link = base + "/?" + q.Encode()
-		p.Text += " " + p.Link
+		link = base + "/?" + q.Encode()
 	}
-	body, _ := json.Marshal(p)
+	var body []byte
+	if w.Format == formatGrafana {
+		body, _ = json.Marshal(newAnnotation(c, link))
+	} else {
+		p := Payload{Change: c, Link: link, Text: text(c)}
+		if link != "" {
+			p.Text += " " + link
+		}
+		body, _ = json.Marshal(p)
+	}
 	for backoff := time.Second; ctx.Err() == nil; backoff = min(2*backoff, 5*time.Minute) {
 		err := w.post(ctx, client, body, c.ID)
 		if err == nil {
@@ -217,6 +261,9 @@ func (w Webhook) post(ctx context.Context, client *http.Client, body []byte, id 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Mnemo-Change", strconv.FormatInt(id, 10))
+	if w.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+w.Token)
+	}
 	if w.Secret != "" {
 		req.Header.Set("X-Mnemo-Signature", "sha256="+Sign(w.Secret, body))
 	}
