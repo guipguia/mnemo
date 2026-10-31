@@ -69,6 +69,20 @@ hub:
   # The hub reads it at startup: restart the pod after changing it.
   webhooks:
     secret: ""
+  # Continuous SQLite backup with Litestream (https://litestream.io), run as a sidecar.
+  # On an empty volume (new cluster, lost PVC), the hub restores from the replica first.
+  backup:
+    enabled: false
+    # Required: where to replicate, e.g. s3://bucket/mnemo, gs://bucket/mnemo,
+    # abs://container@account/mnemo, sftp://user@host/path. S3-compatible stores take
+    # ?endpoint=https://minio.example.com in the URL.
+    url: ""
+    # Secret whose keys become the sidecar's environment: AWS_ACCESS_KEY_ID and
+    # AWS_SECRET_ACCESS_KEY, GOOGLE_APPLICATION_CREDENTIALS, LITESTREAM_AZURE_ACCOUNT_KEY, ...
+    # Leave empty with workload identity (IRSA, GKE Workload Identity).
+    existingSecret: ""
+    image: litestream/litestream:0.5.17@sha256:4b02b9859a6b6b4087d8b8944e15f7e984bd7957cba322bbeee38b0e27b9656a
+    resources: {}
   service:
     type: ClusterIP
     port: 80
