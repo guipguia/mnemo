@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { stringify } from 'yaml'
-import { api, type Change, type KubeEvent, type Ref } from './api'
+import { api, type Change, type Commit, type KubeEvent, type Ref } from './api'
 import { Author, Paths, TypeBadge } from './Badges'
 import { Diff } from './Diff'
 import { ago, fmtTime, fromLocalInput, toLocalInput, type Nav } from './url'
@@ -108,6 +108,18 @@ function EventRow({ e, self }: { e: KubeEvent; self: boolean }) {
   )
 }
 
+// "from shop @ 0123abc": the app's revision, linked when the repo is known.
+function CommitLink({ c }: { c: Commit }) {
+  const rev = c.revision.replace(/^.*@sha1:/, '') // Flux: "main@sha1:<sha>"
+  const short = /^[0-9a-f]{40}/.test(rev) ? rev.slice(0, 7) : rev
+  return (
+    <span className="commit" title={`${c.kind} ${c.namespace}/${c.name}${c.repo ? `\n${c.repo}` : ''}\n${c.revision}`}>
+      {' '}
+      from {c.name} @ {c.url ? <a href={c.url} target="_blank" rel="noreferrer">{short}</a> : <code>{short}</code>}
+    </span>
+  )
+}
+
 function Version({ c, prev }: { c: Change; prev?: Change }) {
   const [full, setFull] = useState<[Change, Change | null] | null>(null)
   const [mode, setMode] = useState<'diff' | 'yaml'>('diff')
@@ -127,6 +139,7 @@ function Version({ c, prev }: { c: Change; prev?: Change }) {
       <div className="version-head">
         <div>
           <strong>{title}</strong> · {fmtTime(c.time)} by <Author c={c} />
+          {full?.[0].commit && <CommitLink c={full[0].commit} />}
           {c.type === 'deleted' && c.author === '' && <p className="hint">Deletions carry no author until audit attribution is enabled.</p>}
         </div>
         <div className="tabs">

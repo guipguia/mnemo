@@ -19,7 +19,7 @@ Design details: [docs/design.md](docs/design.md).
 ## v0.2: who and why
 - [x] Audit webhook receiver in the agent for user attribution ([docs/audit.md](docs/audit.md))
 - [x] Events archive and rollout correlation on the timeline
-- [ ] Link GitOps changes to Git commits (Argo CD, Flux)
+- [x] Link GitOps changes to Git commits (Argo CD, Flux)
 - [x] Outbound webhooks on matching changes (filters, retries, HMAC signatures) ([docs/webhooks.md](docs/webhooks.md))
 - [ ] Grafana annotations integration
 - [x] Retention policy (age / count)

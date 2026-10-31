@@ -23,6 +23,8 @@ can reconstruct any object at any point in time, not just get notified that it c
 - **Change feed** across clusters: every change with who made it, which fields changed, and
   whether it came from GitOps, a controller, or a human.
 - **Drift:** manual changes to GitOps-managed objects (Argo CD, Flux) are flagged.
+- **Git revisions:** GitOps changes link to the commit that made them, when the agent also
+  watches Argo CD Applications or Flux Kustomizations (see `agent.watch`).
 - **Time travel:** any object's full history, YAML diffs between versions, and its exact
   state at any moment.
 - **Day-one value:** on install, every object is recorded with who last touched it.

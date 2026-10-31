@@ -27,6 +27,7 @@ type Batch struct {
 	Checkpoints map[string]string `json:"checkpoints,omitempty"` // "group/version/resource" -> resourceVersion
 	Audits      []Audit           `json:"audits,omitempty"`
 	Events      []store.Event     `json:"events,omitempty"`
+	Deploys     []store.Deploy    `json:"deploys,omitempty"`
 }
 
 // Audit is a write seen by the cluster's audit webhook: who wrote namespace/name at
@@ -100,6 +101,11 @@ func Ingest(ctx context.Context, s *store.Store, b Batch) error {
 			return err
 		}
 	}
+	if len(b.Deploys) > 0 {
+		if err := s.RecordDeploys(ctx, b.Cluster, b.Deploys); err != nil {
+			return err
+		}
+	}
 	if len(b.Events) > 0 {
 		if err := s.RecordEvents(ctx, b.Cluster, b.Events); err != nil {
 			return err
@@ -161,7 +167,10 @@ func Handler(s *store.Store, token string, access func(*http.Request) store.Acce
 		if err == nil && !access(r).Allows(c.Cluster, c.Namespace) {
 			err = store.ErrNotFound
 		}
-		reply(w)(c, err)
+		reply(w)(struct {
+			store.Change
+			Commit *Commit `json:"commit,omitempty"`
+		}{c, commitFor(r.Context(), s, c)}, err)
 	})
 
 	mux.HandleFunc("GET /api/v1/history", func(w http.ResponseWriter, r *http.Request) {

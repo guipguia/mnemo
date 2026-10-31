@@ -127,9 +127,22 @@ user agent when available):
 | `unknown` | Offline gap, no attribution |
 
 A `manual` change to an object that is also GitOps-managed is flagged as **drift**:
-"someone ran `kubectl edit` in prod at 14:31". For `gitops` changes, link to the commit
-using Argo CD (`argocd.argoproj.io/*`, Application status) or Flux (`kustomize.toolkit.fluxcd.io/*`,
-revision) metadata where present.
+"someone ran `kubectl edit` in prod at 14:31".
+
+### Git revisions for GitOps changes
+
+When the agent watches Argo CD Applications or Flux Kustomizations, it also sends their
+deploys to the hub (a `deploys` table): Argo CD's `status.history` (revision, repo, start and
+end of each sync), and each new Flux `status.lastAppliedRevision` with the time it was seen.
+
+Reading a `gitops` change (`GET /api/v1/changes/{id}`), the hub names the owning app from
+the object's tracking metadata (Argo CD's `argocd.argoproj.io/tracking-id` annotation or
+instance label, Flux's `kustomize.toolkit.fluxcd.io/name` and `/namespace` labels), and picks
+the deploy in progress at the change's time, or else the latest one before it (a drift
+revert re-applies the current revision). It's a read-time join, so a sync recorded after
+its changes still links them. Argo CD revisions link to the commit on GitHub, GitLab,
+Bitbucket or Gitea-style hosts; Flux shows the revision without a link, since the repo URL
+lives on the GitRepository.
 
 ## Storage
 
