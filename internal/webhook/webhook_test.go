@@ -3,6 +3,7 @@ package webhook
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -149,6 +150,32 @@ func TestDeliverGrafana(t *testing.T) {
 	// Grafana renders HTML: object data is escaped, and the link is a real one.
 	if !strings.Contains(got.Text, "by &lt;bob&gt;") || !strings.Contains(got.Text, `<a href="https://m.example.com/?change=0&amp;cluster=prod`) {
 		t.Errorf("text = %q", got.Text)
+	}
+
+	// Cluster-scoped: no namespace tag.
+	c = store.Change{Ref: store.Ref{Cluster: "prod", Kind: "ClusterRole", Name: "admin"}, Time: t0, Type: store.Added, Source: "gitops"}
+	w.deliver(context.Background(), srv.Client(), "", c, slog.Default())
+	if !slices.Equal(got.Tags, []string{"mnemo", "cluster:prod", "kind:ClusterRole", "type:added", "source:gitops"}) {
+		t.Errorf("cluster-scoped tags = %v", got.Tags)
+	}
+
+	// token without format: the mnemo payload, with the bearer token.
+	auth = ""
+	w = Webhook{URL: srv.URL, Token: "t0k"}
+	w.deliver(context.Background(), srv.Client(), "", c, slog.Default())
+	if auth != "Bearer t0k" {
+		t.Errorf("plain webhook auth = %q", auth)
+	}
+}
+
+func TestRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "invalid API key", http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	err := Webhook{URL: srv.URL}.post(context.Background(), srv.Client(), nil, 1)
+	if !errors.Is(err, errRejected) {
+		t.Errorf("401: err = %v, want errRejected", err)
 	}
 }
 

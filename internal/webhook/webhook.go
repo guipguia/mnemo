@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -109,6 +110,9 @@ func Load(path string) (*Config, error) {
 			if t != store.Added && t != store.Modified && t != store.Deleted {
 				return nil, fmt.Errorf("webhooks %s: %s: type %q: want added, modified, or deleted", path, w.Name, t)
 			}
+		}
+		if w.Token != "" && u.Scheme == "http" {
+			slog.Warn("webhook sends its token over plain http", "webhook", w.Name)
 		}
 		seen[w.Name] = true
 	}
@@ -248,7 +252,11 @@ func (w Webhook) deliver(ctx context.Context, client *http.Client, base string, 
 		if err == nil {
 			return true
 		}
-		log.Warn("delivery failed, retrying", "change", c.ID, "err", err, "in", backoff)
+		level := slog.LevelWarn
+		if errors.Is(err, errRejected) {
+			level = slog.LevelError // won't fix itself: later changes wait until someone acts
+		}
+		log.Log(ctx, level, "delivery failed, retrying", "change", c.ID, "err", err, "in", backoff)
 		sleepCtx(ctx, backoff)
 	}
 	return false
@@ -274,10 +282,16 @@ func (w Webhook) post(ctx context.Context, client *http.Client, body []byte, id 
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return fmt.Errorf("%s: %s: %w", resp.Status, bytes.TrimSpace(msg), errRejected)
+		}
 		return fmt.Errorf("%s: %s", resp.Status, bytes.TrimSpace(msg))
 	}
 	return nil
 }
+
+// errRejected marks a 401/403: a token or permission problem that retrying won't fix.
+var errRejected = errors.New("check the webhook's token and its permissions")
 
 // Sign is the hex HMAC-SHA256 of body: receivers compare it to X-Mnemo-Signature
 // (after "sha256=") in constant time.
