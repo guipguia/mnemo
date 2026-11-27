@@ -85,3 +85,33 @@ example for kind.
   wrong person: keep it secret and rotate it with the API server config.
 - Audit events can contain the full bodies of watched objects. mnemo only keeps who made
   each write; the bodies come from its own watch, as before.
+
+## Backfill
+
+If the API server already writes an audit log (`--audit-log-path`) at the
+`RequestResponse` level for the watched resources, `mnemo backfill` turns it into history
+from before mnemo was installed: every successful create, update, patch and delete, with
+who made it.
+
+```sh
+mnemo backfill --cluster prod --hub https://mnemo.example.com --token "$MNEMO_TOKEN" \
+  /var/log/kubernetes/audit/audit-*.log.gz /var/log/kubernetes/audit/audit.log
+```
+
+- **Run it before the cluster's first agent run.** History is a chain of versions, each
+  compared with the one before, so older versions can't go under newer ones. Once an agent
+  has run for the cluster, the hub refuses backfill. When the agent then starts, its first
+  list compares each object with its last backfilled version.
+- Pass every API server's logs (HA control planes log separately), compressed or not, in
+  any order: writes are sorted by time.
+- Running it again is safe, after a crash or with logs that add *later* writes: versions
+  the hub already has are skipped. Logs that add *earlier* writes would land after the newer
+  versions.
+- `--cluster` must be the name the agent will use. The cluster's identity (the
+  `kube-system` namespace UID) is read with your kubeconfig, or given with `--cluster-uid`.
+  `--resources` should match the agent's.
+- Writes through subresources (`/scale`, `/status`) and dry runs are skipped: a `kubectl
+  scale` shows up at the object's next full write, or at the agent's first list.
+- Managed clusters (EKS, GKE, AKS) keep audit logs in the cloud's log service: export them
+  as JSON lines first. Writes at the `Metadata` level carry no object and are skipped.
+- Every write is held in memory until it is sent: a few GB of logs need about as much RAM.

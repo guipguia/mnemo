@@ -68,6 +68,18 @@ func (w *Writer) Fresh(ctx context.Context, cluster, session, stream string, seq
 	return err == nil, err
 }
 
+// HasVersion reports whether r's version at resourceVersion rv is already stored.
+func (w *Writer) HasVersion(ctx context.Context, r Ref, rv string) (bool, error) {
+	var one int
+	err := w.tx.QueryRowContext(ctx, `SELECT 1 FROM changes WHERE cluster = ? AND resource_version = ?
+		AND api_group = ? AND kind = ? AND namespace = ? AND name = ? AND type != ? LIMIT 1`,
+		r.Cluster, rv, r.Group, r.Kind, r.Namespace, r.Name, string(Deleted)).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // The Store methods below each write in a transaction of their own.
 
 func (s *Store) Record(ctx context.Context, c *Change, listed bool, attribute func(*Change)) (ok bool, err error) {

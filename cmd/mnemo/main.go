@@ -39,7 +39,7 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: mnemo hub|agent|all|version [flags]")
+		fmt.Fprintln(os.Stderr, "usage: mnemo hub|agent|all|backfill|version [flags]")
 		os.Exit(2)
 	}
 	if os.Args[1] == "version" {
@@ -48,6 +48,10 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	run := run
+	if os.Args[1] == "backfill" {
+		run = func(ctx context.Context, _ string, args []string) error { return backfill(ctx, args) }
+	}
 	if err := run(ctx, os.Args[1], os.Args[2:]); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error("exiting", "err", err)
 		os.Exit(1)

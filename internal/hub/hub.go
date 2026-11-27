@@ -26,6 +26,9 @@ import (
 // Batch is what an agent pushes. The hub stores all of it in one transaction, or none of it.
 // Session, Stream and Seq order a stream's batches: the hub drops one that comes after a
 // later one, such as a slow original that finishes after its own retry (see store.Fresh).
+// BackfillStream is the stream of history read from audit logs (see agent.Backfill).
+const BackfillStream = "backfill"
+
 type Batch struct {
 	Cluster     string            `json:"cluster"`
 	ClusterUID  string            `json:"clusterUID"`        // kube-system namespace UID
@@ -128,6 +131,15 @@ func ingestTx(ctx context.Context, s *store.Writer, b Batch) error {
 	}
 	for _, it := range b.Items {
 		it.Cluster = b.Cluster
+		if b.Stream == BackfillStream && it.Object != nil && it.ResourceVersion != "" {
+			// A backfill run again over the same logs: keep the versions it already stored.
+			if dup, err := s.HasVersion(ctx, it.Ref, it.ResourceVersion); err != nil || dup {
+				if err != nil {
+					return err
+				}
+				continue
+			}
+		}
 		if _, err := s.Record(ctx, &it.Change, it.Listed, func(c *store.Change) { attribute(c, it.Managers) }); err != nil {
 			return err
 		}
