@@ -10,7 +10,7 @@ metadata:
   name: {{ include "mnemo.fullname" . }}
   labels: {{- include "mnemo.labels" . | nindent 4 }}
 spec:
-  replicas: 1  # SQLite: one writer
+  replicas: 1  # one hub: SQLite has one writer, and webhooks and retention run in the hub
   strategy: {type: Recreate}  # the ReadWriteOnce volume can't attach to two pods
   selector:
     matchLabels: {{- include "mnemo.selector" . | nindent 6 }}
@@ -50,7 +50,9 @@ spec:
           args:
             - {{ .Values.mode }}
             {{- if $hub }}
+            {{- if not .Values.hub.database.existingSecret }}
             - --db=/data/mnemo.db
+            {{- end }}
             - --listen=:8080
             {{- if .Values.hub.metrics.enabled }}
             - --metrics-listen=:9090
@@ -97,6 +99,10 @@ spec:
           env:
             - name: MNEMO_TOKEN
               valueFrom: {secretKeyRef: {name: {{ include "mnemo.tokenSecret" . }}, key: token}}
+            {{- if and $hub .Values.hub.database.existingSecret }}
+            - name: MNEMO_DB
+              valueFrom: {secretKeyRef: {name: {{ .Values.hub.database.existingSecret }}, key: url}}
+            {{- end }}
             {{- if $audit }}
             - name: MNEMO_AUDIT_TOKEN
               valueFrom: {secretKeyRef: {name: {{ .Values.agent.audit.existingSecret }}, key: token}}
@@ -153,7 +159,11 @@ spec:
         {{- end }}
         {{- if $hub }}
         - name: data
+          {{- if .Values.hub.database.existingSecret }}
+          emptyDir: {}
+          {{- else }}
           persistentVolumeClaim: {claimName: {{ include "mnemo.fullname" . }}}
+          {{- end }}
         {{- if ne $auth.mode "none" }}
         - name: policy
           configMap: {name: {{ include "mnemo.fullname" . }}-policy}

@@ -71,7 +71,8 @@ Expose the hub with `hub.ingress.*` and turn on login with `hub.auth.*` before g
 others access: with the default `hub.auth.mode=none`, anyone who can reach it sees all
 history. All options: [charts/mnemo/values.yaml](charts/mnemo/values.yaml).
 
-History lives in SQLite on a PersistentVolume (block storage, not NFS), kept on
+History lives in SQLite on a PersistentVolume (block storage, not NFS), or in
+[PostgreSQL](docs/postgres.md) with `hub.database.existingSecret`. It is kept on
 `helm uninstall`, and is kept forever by default. Cap it with `hub.retention.days` and
 `hub.retention.versions` (per object); each object's current state is never expired.
 Archived Events expire after `hub.retention.eventDays` (30 by default).

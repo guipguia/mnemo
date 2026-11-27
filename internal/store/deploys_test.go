@@ -3,14 +3,13 @@ package store
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestDeploys(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	s, err := openTest(t)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -33,7 +33,7 @@ func (s *Store) RecordEvents(ctx context.Context, cluster string, evs []Event) e
 			(cluster, uid, api_group, kind, namespace, name, type, reason, message, source, count, first_ts, last_ts)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (cluster, uid) DO UPDATE SET message = excluded.message, count = excluded.count,
-				last_ts = MAX(last_ts, excluded.last_ts)`,
+				last_ts = `+s.db.greatest()+`(events.last_ts, excluded.last_ts)`,
 			cluster, e.UID, e.Group, e.Kind, e.Namespace, e.Name, e.Type, e.Reason, e.Message, e.Source,
 			e.Count, e.FirstTime.UnixNano(), e.LastTime.UnixNano()); err != nil {
 			return err

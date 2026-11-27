@@ -28,9 +28,10 @@ Design details: [docs/design.md](docs/design.md).
 - [x] Release supply chain: cosign signatures, SBOM, SLSA provenance
 
 ## v0.3: production-ish
-- [ ] PostgreSQL backend (enables hub HA)
+- [x] PostgreSQL backend, one hub ([docs/postgres.md](docs/postgres.md))
+- [ ] Hub HA on PostgreSQL (leader election for webhooks and retention, gap-free webhook cursors)
 - [ ] MySQL backend
-- [ ] Shared storage conformance suite run against every backend in CI
+- [x] Shared storage conformance suite run against every backend in CI
 - [x] SSO: OIDC login and trusted auth-proxy headers ([docs/auth.md](docs/auth.md))
 - [x] Policy: IdP groups/users → clusters × namespaces
 - [ ] Optional mode: evaluate access against each cluster's recorded Kubernetes RBAC

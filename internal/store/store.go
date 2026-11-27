@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )
 
@@ -131,20 +132,34 @@ type Change struct {
 	Object          json.RawMessage `json:"object,omitempty"` // normalized object; nil when Deleted or not loaded
 }
 
-type Store struct{ db *sql.DB }
+type Store struct{ db db }
 
-func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+// IsPostgres reports whether dsn names a PostgreSQL database rather than a SQLite file.
+func IsPostgres(dsn string) bool {
+	return strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://")
+}
+
+// Open opens a SQLite file, or a PostgreSQL database given a postgres:// URL.
+func Open(dsn string) (*Store, error) {
+	d, ddl := db{pg: IsPostgres(dsn)}, schema
+	var err error
+	if d.pg {
+		d.DB, err = sql.Open("pgx", dsn)
+		ddl = pgSchema
+	} else {
+		d.DB, err = sql.Open("sqlite", "file:"+dsn+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	}
 	if err != nil {
 		return nil, err
 	}
-	// ponytail: one connection serializes reads and writes; fine for one hub, revisit with Postgres/HA.
-	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
+	// ponytail: one connection serializes reads and writes, which Record and friends rely on
+	// (read the latest version, then write the next). Fine for one hub; HA needs row locks.
+	d.SetMaxOpenConns(1)
+	if _, err := d.Exec(ddl); err != nil {
+		d.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
-	return &Store{db}, nil
+	return &Store{d}, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -225,14 +240,10 @@ func (s *Store) Record(ctx context.Context, c *Change, listed bool, attribute fu
 	if c.Object != nil {
 		object = []byte(c.Object)
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO changes (`+cols[len("id, "):]+`, object)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	if err := tx.QueryRowContext(ctx, `INSERT INTO changes (`+cols[len("id, "):]+`, object)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
 		c.Cluster, c.Group, c.Version, c.Kind, c.Namespace, c.Name, c.UID, c.ResourceVersion,
-		c.Time.UnixNano(), string(c.Type), c.Author, c.Source, c.Drift, paths, object)
-	if err != nil {
-		return false, err
-	}
-	if c.ID, err = res.LastInsertId(); err != nil {
+		c.Time.UnixNano(), string(c.Type), c.Author, c.Source, c.Drift, paths, object).Scan(&c.ID); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()

@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -59,7 +60,7 @@ func run(ctx context.Context, mode string, args []string) error {
 	var retentionDays, retentionVersions, eventRetentionDays *int
 	var newAuth func(context.Context) (*auth.Auth, error)
 	if mode == "hub" || mode == "all" {
-		db = fs.String("db", "mnemo.db", "SQLite database path")
+		db = fs.String("db", envOr("MNEMO_DB", "mnemo.db"), "SQLite database path, or a postgres:// URL (default $MNEMO_DB, then mnemo.db); see docs/postgres.md")
 		listen = fs.String("listen", ":8080", "HTTP listen address")
 		metricsListen = fs.String("metrics-listen", "", "serve Prometheus /metrics here, e.g. :9090 (default: off); see docs/metrics.md")
 		retentionDays = fs.Int("retention-days", 0, "delete versions older than this many days (0: keep forever); each object's current state is kept")
@@ -165,7 +166,7 @@ func run(ctx context.Context, mode string, args []string) error {
 			defer cancel()
 			srv.Shutdown(shutdown)
 		}()
-		slog.Info("hub listening", "version", version, "addr", *listen, "db", *db, "ingest", *token != "", "auth", au.Mode(),
+		slog.Info("hub listening", "version", version, "addr", *listen, "db", redact(*db), "ingest", *token != "", "auth", au.Mode(),
 			"webhooks", *webhooks, "retentionDays", *retentionDays, "retentionVersions", *retentionVersions, "eventRetentionDays", *eventRetentionDays)
 		if *metricsListen != "" {
 			// Separate listener: metrics name clusters and webhooks, and skip the access policy.
@@ -221,6 +222,21 @@ func expire(ctx context.Context, st *store.Store, days, versions, eventDays int)
 		case <-time.After(time.Hour):
 		}
 	}
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// redact hides a database URL's password for logging.
+func redact(dsn string) string {
+	if u, err := url.Parse(dsn); err == nil && store.IsPostgres(dsn) {
+		return u.Redacted()
+	}
+	return dsn
 }
 
 func loopback(addr string) bool {

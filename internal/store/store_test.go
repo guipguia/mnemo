@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -12,7 +11,7 @@ import (
 
 func TestStore(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	s, err := openTest(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +90,7 @@ func TestStore(t *testing.T) {
 
 func TestClustersCheckpointsPrune(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	s, err := openTest(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +138,7 @@ func TestClustersCheckpointsPrune(t *testing.T) {
 
 func TestAccess(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	s, err := openTest(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +195,7 @@ func TestAccess(t *testing.T) {
 
 func TestRecordKeepsOrder(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	s, err := openTest(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +220,7 @@ func TestRecordKeepsOrder(t *testing.T) {
 
 func TestExpire(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	s, err := openTest(t)
 	if err != nil {
 		t.Fatal(err)
 	}
