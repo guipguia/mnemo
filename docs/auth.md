@@ -36,6 +36,42 @@ rules:
   granting a whole cluster.
 - Objects outside your access look exactly like objects that don't exist (empty history, 404).
 
+### RBAC mode
+
+Instead of (or as well as) listing teams in the policy, let each cluster's own Kubernetes
+RBAC decide: a user sees, kind by kind, what the cluster lets them `get`, `list` or `watch`.
+
+```yaml
+rbac:                     # `rbac: {}` with no prefixes; a bare `rbac:` leaves it off
+  userPrefix: "oidc:"     # the API server's --oidc-username-prefix, if any
+  groupPrefix: "oidc:"    # its --oidc-groups-prefix
+rules:                    # optional: rules still add to what RBAC grants
+- groups: [sre]
+```
+
+The hub has no credentials for your clusters, so it evaluates the RBAC objects the agents
+record (Roles, ClusterRoles, RoleBindings, ClusterRoleBindings: watched by default). For a
+user `alice` in group `team-shop`, a RoleBinding in `shop` binding `User oidc:alice` or
+`Group oidc:team-shop` to the `view` ClusterRole shows them the kinds `view` can read in
+`shop`, and nothing else.
+
+- **Identities must match.** The username and groups from your login (`--oidc-username-claim`,
+  the proxy headers) plus the prefixes must be the names your bindings use. With EKS IAM,
+  GKE Google accounts and similar, they often aren't: check a few users on the
+  "Can see" line in the UI header.
+- About 30 seconds stale: the hub reloads the recorded RBAC in the background every 30
+  seconds, so a revoked binding takes that long to apply (plus however long the agent takes
+  to see it).
+- With OIDC, the session keeps only the groups that a policy rule or a recorded binding
+  names at login. A binding for a group added later applies at the user's next login.
+- Narrower than Kubernetes: rules limited to `resourceNames`, subresources, ServiceAccount
+  subjects and implicit groups (`system:authenticated`) grant nothing. Users and groups
+  whose name (with its prefix) starts with `system:` are ignored, as the API server reserves
+  those: an IdP group called `system:masters` must not mean cluster-admin.
+- Events are shown with the object they're about, so you need access to that object's kind.
+- Kinds are matched to resource names by the usual plural (`NetworkPolicy` →
+  `networkpolicies`). A custom resource with an irregular plural won't match.
+
 ## OIDC
 
 Register mnemo as a web application (confidential client) in your IdP with the redirect URL

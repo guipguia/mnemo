@@ -141,6 +141,7 @@ hub:
     #   - groups: [team-shop]
     #     clusters: [prod]
     #     namespaces: [shop]
+    #   rbac: {}  # also grant what each cluster's recorded Kubernetes RBAC does
     policy: {}
     oidc:
       issuer: ""

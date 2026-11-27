@@ -73,7 +73,7 @@ type Match struct {
 func (m Match) matches(c store.Change) bool {
 	in := func(list []string, v string) bool { return len(list) == 0 || slices.Contains(list, v) }
 	return c.Type != store.Baseline &&
-		(store.Access{Scopes: []store.Scope{m.Scope}}).Allows(c.Cluster, c.Namespace) &&
+		(store.Access{Scopes: []store.Scope{m.Scope}}).Allows(c.Ref) &&
 		in(m.Kinds, c.Kind) && in(m.Names, c.Name) && in(m.Sources, c.Source) &&
 		(len(m.Types) == 0 || slices.Contains(m.Types, c.Type)) && (!m.DriftOnly || c.Drift)
 }

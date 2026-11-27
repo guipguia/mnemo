@@ -34,7 +34,7 @@ Design details: [docs/design.md](docs/design.md).
 - [x] Shared storage conformance suite run against every backend in CI
 - [x] SSO: OIDC login and trusted auth-proxy headers ([docs/auth.md](docs/auth.md))
 - [x] Policy: IdP groups/users → clusters × namespaces
-- [ ] Optional mode: evaluate access against each cluster's recorded Kubernetes RBAC
+- [x] Optional mode: evaluate access against each cluster's recorded Kubernetes RBAC
 - [x] Agent ↔ hub mTLS ([docs/mtls.md](docs/mtls.md))
 - [x] Prometheus metrics ([docs/metrics.md](docs/metrics.md))
 - [ ] OpenTelemetry traces

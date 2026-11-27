@@ -37,7 +37,7 @@ export type Cluster = { name: string; uid: string; lastSeen: string }
 export type Me = {
   mode: 'none' | 'oidc' | 'proxy'
   user: { name: string; groups?: string[] }
-  access: { All: boolean; Scopes: { clusters?: string[]; namespaces?: string[] }[] | null }
+  access: { All: boolean; Scopes: { clusters?: string[]; namespaces?: string[]; resources?: { group: string; resource: string }[] }[] | null }
 }
 
 type Params = Record<string, string | undefined>

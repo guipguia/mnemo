@@ -110,7 +110,7 @@ func newMCPServer(s *store.Store, a store.Access, version string, cache *mcp.Sch
 		func(ctx context.Context, _ *mcp.CallToolRequest, in historyIn) (*mcp.CallToolResult, any, error) {
 			cs := []store.Change{}
 			var err error
-			if r := in.ref(); a.Allows(r.Cluster, r.Namespace) {
+			if r := in.ref(); a.Allows(r) {
 				cs, err = s.History(ctx, r, in.Limit)
 			}
 			return nil, map[string]any{"versions": cs}, err
@@ -128,7 +128,7 @@ func newMCPServer(s *store.Store, a store.Access, version string, cache *mcp.Sch
 			}
 			r := in.ref()
 			missing := fmt.Errorf("no %s %s/%s in cluster %q at %s", r.Kind, r.Namespace, r.Name, r.Cluster, t.Format(time.RFC3339))
-			if !a.Allows(r.Cluster, r.Namespace) { // first, so errors can't tell hidden from missing
+			if !a.Allows(r) { // first, so errors can't tell hidden from missing
 				return nil, nil, missing
 			}
 			c, err := s.At(ctx, r, t)

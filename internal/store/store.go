@@ -323,21 +323,78 @@ type Access struct {
 // Empty Clusters means every cluster. Empty Namespaces means every namespace and
 // cluster-scoped objects; with Namespaces set, "*" matches any namespace but never
 // cluster-scoped objects (ClusterRoles, ClusterRoleBindings, ...).
+// Resources, set only by the RBAC mode, further limits it to some kinds of objects.
 type Scope struct {
-	Clusters   []string `json:"clusters,omitempty"`
-	Namespaces []string `json:"namespaces,omitempty"`
+	Clusters   []string  `json:"clusters,omitempty"`
+	Namespaces []string  `json:"namespaces,omitempty"`
+	Resources  Resources `json:"resources,omitempty"`
 }
 
-func (a Access) Allows(cluster, namespace string) bool {
+// Resource is an RBAC rule's API group and resource (plural, lowercase); "*" matches any.
+type Resource struct {
+	Group    string `json:"group"`
+	Resource string `json:"resource"`
+}
+
+// Resources is empty for every kind of object.
+type Resources []Resource
+
+// UnmarshalJSON refuses resources in config files (policy rules, webhook matches): only
+// the RBAC mode sets them.
+func (*Resources) UnmarshalJSON([]byte) error {
+	return errors.New(`unknown field "resources"`)
+}
+
+func (a Access) Allows(r Ref) bool {
 	if a.All {
 		return true
 	}
 	for _, s := range a.Scopes {
-		if matchAny(s.Clusters, cluster, false) && matchAny(s.Namespaces, namespace, true) {
+		if matchAny(s.Clusters, r.Cluster, false) && matchAny(s.Namespaces, r.Namespace, true) && s.Resources.allow(r) {
 			return true
 		}
 	}
 	return false
+}
+
+func (rs Resources) allow(r Ref) bool {
+	if len(rs) == 0 {
+		return true
+	}
+	plural := Plural(r.Kind)
+	for _, x := range rs {
+		if (x.Group == "*" || x.Group == r.Group) && (x.Resource == "*" || x.Resource == plural) {
+			return true
+		}
+	}
+	return false
+}
+
+// Plural guesses a kind's resource name, as Kubernetes and kubebuilder name them.
+// ponytail: a guess; CRDs with irregular plurals won't match. Record the resource name if that bites.
+func Plural(kind string) string {
+	k := strings.ToLower(kind)
+	switch {
+	case k == "endpoints":
+		return k
+	case strings.HasSuffix(k, "s"), strings.HasSuffix(k, "x"), strings.HasSuffix(k, "ch"), strings.HasSuffix(k, "sh"):
+		return k + "es"
+	case strings.HasSuffix(k, "y") && len(k) > 1 && !strings.ContainsRune("aeiou", rune(k[len(k)-2])):
+		return k[:len(k)-1] + "ies"
+	}
+	return k + "s"
+}
+
+// kinds are the lowercase kinds whose Plural is resource.
+func kinds(resource string) []string {
+	var out []string
+	for _, k := range []string{resource, strings.TrimSuffix(resource, "s"), strings.TrimSuffix(resource, "es"),
+		strings.TrimSuffix(resource, "ies") + "y"} {
+		if k != "" && Plural(k) == resource && !slices.Contains(out, k) {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // AllowsCluster reports whether anything in cluster is visible.
@@ -368,7 +425,8 @@ func matchAny(patterns []string, v string, namespace bool) bool {
 	return false
 }
 
-// sql renders Access as a WHERE condition with the same semantics as Allows.
+// sql renders Access as a WHERE condition with the same semantics as Allows, on a table
+// with cluster, namespace, api_group and kind columns.
 func (a Access) sql() (string, []any) {
 	if a.All {
 		return "1 = 1", nil
@@ -384,8 +442,42 @@ func (a Access) sql() (string, []any) {
 		if len(s.Namespaces) > 0 {
 			n = "(namespace != '' AND " + n + ")"
 		}
-		ors = append(ors, "("+c+" AND "+n+")")
-		args = append(append(args, ca...), na...)
+		r, ra := s.Resources.sql()
+		ors = append(ors, "("+c+" AND "+n+" AND "+r+")")
+		args = append(append(append(args, ca...), na...), ra...)
+	}
+	return "(" + strings.Join(ors, " OR ") + ")", args
+}
+
+func (rs Resources) sql() (string, []any) {
+	if len(rs) == 0 {
+		return "1 = 1", nil
+	}
+	var ors []string
+	var args []any
+	for _, x := range rs {
+		var and []string
+		if x.Group != "*" {
+			and = append(and, "api_group = ?")
+			args = append(args, x.Group)
+		}
+		if x.Resource != "*" {
+			ks := kinds(x.Resource)
+			if len(ks) == 0 {
+				continue // no kind has this plural
+			}
+			and = append(and, "lower(kind) IN (?"+strings.Repeat(", ?", len(ks)-1)+")")
+			for _, k := range ks {
+				args = append(args, k)
+			}
+		}
+		if len(and) == 0 {
+			return "1 = 1", nil
+		}
+		ors = append(ors, "("+strings.Join(and, " AND ")+")")
+	}
+	if len(ors) == 0 {
+		return "1 = 0", nil
 	}
 	return "(" + strings.Join(ors, " OR ") + ")", args
 }
@@ -513,6 +605,34 @@ func (s *Store) At(ctx context.Context, r Ref, t time.Time) (Change, error) {
 		return Change{}, ErrNotFound
 	}
 	return c, err
+}
+
+// Current returns the newest version, with its object, of every live object of the given
+// kinds in group in cluster.
+func (s *Store) Current(ctx context.Context, cluster, group string, kinds ...string) ([]Change, error) {
+	args := []any{cluster, group}
+	for _, k := range kinds {
+		args = append(args, k)
+	}
+	// Rank IDs only, then read just the newest rows' objects.
+	rows, err := s.db.QueryContext(ctx, `SELECT `+cols+`, object FROM changes WHERE id IN (
+			SELECT id FROM (
+				SELECT id, type, ROW_NUMBER() OVER (PARTITION BY kind, namespace, name ORDER BY id DESC) AS n
+				FROM changes WHERE cluster = ? AND api_group = ? AND kind IN (?`+strings.Repeat(", ?", len(kinds)-1)+`)) AS ranked
+			WHERE n = 1 AND type != ?)`, append(args, string(Deleted))...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Change
+	for rows.Next() {
+		c, err := scan(rows, true)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // Prune records a deletion for every live object of cluster/group/kind not in keep

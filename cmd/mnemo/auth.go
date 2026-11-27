@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"github.com/guipguia/mnemo/internal/auth"
+	"github.com/guipguia/mnemo/internal/store"
 )
 
 // authFlags registers the UI/API login flags and returns a constructor to call after parsing.
-func authFlags(fs *flag.FlagSet) func(context.Context) (*auth.Auth, error) {
+func authFlags(fs *flag.FlagSet) func(context.Context, *store.Store) (*auth.Auth, error) {
 	mode := fs.String("auth", "none", "UI/API login: none, oidc, or proxy")
 	policy := fs.String("policy", "", "access policy file (required with --auth); see docs/auth.md")
 	issuer := fs.String("oidc-issuer", "", "OIDC issuer URL")
@@ -28,13 +29,13 @@ func authFlags(fs *flag.FlagSet) func(context.Context) (*auth.Auth, error) {
 	groupsHeader := fs.String("proxy-groups-header", "X-Forwarded-Groups", "header carrying comma-separated groups from the auth proxy")
 	trusted := fs.String("proxy-trusted-cidrs", "", "comma-separated CIDRs the auth proxy connects from (required with --auth proxy)")
 
-	return func(ctx context.Context) (*auth.Auth, error) {
+	return func(ctx context.Context, st *store.Store) (*auth.Auth, error) {
 		fromEnv(secret, "MNEMO_OIDC_CLIENT_SECRET", "")
 		cfg := auth.Config{
 			Mode: *mode, Issuer: *issuer, ClientID: *clientID, ClientSecret: *secret, RedirectURL: *redirect,
 			Scopes: strings.Split(*scopes, ","), UsernameClaim: *userClaim, GroupsClaim: *groupsClaim,
 			SessionKey: []byte(os.Getenv("MNEMO_SESSION_KEY")), SessionTTL: *ttl,
-			UserHeader: *userHeader, GroupsHeader: *groupsHeader,
+			UserHeader: *userHeader, GroupsHeader: *groupsHeader, Store: st,
 		}
 		for _, c := range strings.Split(*trusted, ",") {
 			if c = strings.TrimSpace(c); c == "" {

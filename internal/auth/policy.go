@@ -20,8 +20,10 @@ import (
 //	  users: [alice@example.com]
 //	  clusters: [prod, staging]
 //	  namespaces: [shop, "shop-*"]       # namespaced objects only
+//	rbac: {}                             # also what each cluster's recorded RBAC grants
 type Policy struct {
 	Rules []Rule `json:"rules"`
+	RBAC  *RBAC  `json:"rbac,omitempty"`
 }
 
 type Rule struct {
@@ -60,14 +62,23 @@ func (p *Policy) Access(u User) store.Access {
 			a.Scopes = append(a.Scopes, r.Scope)
 		}
 	}
+	if p.RBAC != nil {
+		a.Scopes = append(a.Scopes, p.RBAC.scopes(u)...)
+	}
 	return a
 }
 
-// relevant keeps only groups the policy mentions. IdPs can send hundreds of groups,
-// which would overflow the session cookie and grant nothing anyway.
+// relevant keeps only groups the policy or a recorded binding mentions. IdPs can send
+// hundreds of groups, which would overflow the session cookie and grant nothing anyway.
 func (p *Policy) relevant(groups []string) []string {
 	var out []string
+	if p.RBAC != nil {
+		out = p.RBAC.bound(groups)
+	}
 	for _, g := range groups {
+		if slices.Contains(out, g) {
+			continue
+		}
 		for _, r := range p.Rules {
 			if slices.Contains(r.Groups, g) {
 				out = append(out, g)

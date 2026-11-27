@@ -33,5 +33,7 @@ function describeAccess(me: Me) {
   if (me.access.All) return 'Can see everything'
   const scopes = me.access.Scopes ?? []
   if (!scopes.length) return 'No access: ask an admin to add you to the mnemo policy'
-  return 'Can see:\n' + scopes.map((s) => `${s.clusters?.join(', ') ?? 'all clusters'} · ${s.namespaces?.join(', ') ?? 'all namespaces'}`).join('\n')
+  const kinds = (s: (typeof scopes)[number]) =>
+    s.resources ? ' · ' + s.resources.map((r) => (r.group ? `${r.resource}.${r.group}` : r.resource)).join(', ') : ''
+  return 'Can see:\n' + scopes.map((s) => `${s.clusters?.join(', ') ?? 'all clusters'} · ${s.namespaces?.join(', ') ?? 'all namespaces'}${kinds(s)}`).join('\n')
 }

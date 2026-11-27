@@ -150,6 +150,7 @@ func TestAccess(t *testing.T) {
 		{Cluster: "prod", Kind: "ClusterRole", Name: "d"}, // cluster-scoped
 		{Cluster: "prod-eu", Kind: "ConfigMap", Namespace: "shop", Name: "e"},
 		{Cluster: "staging", Kind: "ConfigMap", Namespace: "shop", Name: "f"},
+		{Cluster: "prod", Group: "apps", Kind: "Deployment", Namespace: "shop", Name: "g"},
 	}
 	for _, r := range objects {
 		if _, err := s.Record(ctx, &Change{Ref: r, Time: time.Now(), Object: []byte(`{}`)}, false, nil); err != nil {
@@ -162,12 +163,19 @@ func TestAccess(t *testing.T) {
 		want string
 	}{
 		{"zero value sees nothing", Access{}, ""},
-		{"all", Access{All: true}, "abcdef"},
-		{"one cluster, everything in it", Access{Scopes: []Scope{{Clusters: []string{"prod"}}}}, "abcd"},
-		{"cluster prefix", Access{Scopes: []Scope{{Clusters: []string{"prod*"}}}}, "abcde"},
-		{"namespace prefix", Access{Scopes: []Scope{{Clusters: []string{"prod"}, Namespaces: []string{"shop*"}}}}, "ab"},
-		{"namespace * excludes cluster-scoped", Access{Scopes: []Scope{{Clusters: []string{"prod"}, Namespaces: []string{"*"}}}}, "abc"},
+		{"all", Access{All: true}, "abcdefg"},
+		{"one cluster, everything in it", Access{Scopes: []Scope{{Clusters: []string{"prod"}}}}, "abcdg"},
+		{"cluster prefix", Access{Scopes: []Scope{{Clusters: []string{"prod*"}}}}, "abcdeg"},
+		{"namespace prefix", Access{Scopes: []Scope{{Clusters: []string{"prod"}, Namespaces: []string{"shop*"}}}}, "abg"},
+		{"namespace * excludes cluster-scoped", Access{Scopes: []Scope{{Clusters: []string{"prod"}, Namespaces: []string{"*"}}}}, "abcg"},
 		{"union of scopes", Access{Scopes: []Scope{{Namespaces: []string{"payments"}}, {Clusters: []string{"staging"}}}}, "cf"},
+		{"core resource", Access{Scopes: []Scope{{Clusters: []string{"prod"}, Resources: Resources{{"", "configmaps"}}}}}, "abc"},
+		{"resource in any group", Access{Scopes: []Scope{{Resources: Resources{{"*", "deployments"}}}}}, "g"},
+		{"every resource of a group", Access{Scopes: []Scope{{Resources: Resources{{"apps", "*"}}}}}, "g"},
+		{"everything", Access{Scopes: []Scope{{Clusters: []string{"prod"}, Resources: Resources{{"", "configmaps"}, {"*", "*"}}}}}, "abcdg"},
+		{"cluster-scoped resource in a namespace", Access{Scopes: []Scope{{Namespaces: []string{"shop"}, Resources: Resources{{"", "clusterroles"}}}}}, ""},
+		{"cluster-scoped resource", Access{Scopes: []Scope{{Resources: Resources{{"", "clusterroles"}}}}}, "d"},
+		{"subresource", Access{Scopes: []Scope{{Resources: Resources{{"", "configmaps/status"}}}}}, ""},
 	} {
 		feed, err := s.Changes(ctx, Filter{Access: tc.a})
 		if err != nil {
@@ -176,7 +184,7 @@ func TestAccess(t *testing.T) {
 		var got []string
 		for _, c := range feed {
 			got = append(got, c.Name)
-			if !tc.a.Allows(c.Cluster, c.Namespace) {
+			if !tc.a.Allows(c.Ref) {
 				t.Errorf("%s: SQL returned %s but Allows denies it", tc.name, c.Name)
 			}
 		}
@@ -186,7 +194,7 @@ func TestAccess(t *testing.T) {
 		}
 		// Allows must agree with SQL for denied objects too.
 		for _, r := range objects {
-			if tc.a.Allows(r.Cluster, r.Namespace) != strings.Contains(tc.want, r.Name) {
+			if tc.a.Allows(r) != strings.Contains(tc.want, r.Name) {
 				t.Errorf("%s: Allows(%s/%s) disagrees with SQL", tc.name, r.Cluster, r.Namespace)
 			}
 		}
@@ -286,5 +294,55 @@ func TestExpire(t *testing.T) {
 	}
 	if id, _ := s.LastID(ctx); id != last {
 		t.Fatalf("last ID %d, want %d", id, last)
+	}
+}
+
+func TestPlural(t *testing.T) {
+	for kind, want := range map[string]string{
+		"ConfigMap": "configmaps", "Ingress": "ingresses", "NetworkPolicy": "networkpolicies", "Gateway": "gateways",
+		"Endpoints": "endpoints", "StorageClass": "storageclasses", "Mesh": "meshes", "Box": "boxes",
+	} {
+		if got := Plural(kind); got != want {
+			t.Errorf("Plural(%s) = %s, want %s", kind, got, want)
+		}
+		if !slices.Contains(kinds(want), strings.ToLower(kind)) {
+			t.Errorf("kinds(%s) = %v, want %s in it", want, kinds(want), strings.ToLower(kind))
+		}
+	}
+}
+
+func TestCurrent(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTest(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	rec := func(kind, name, obj string) {
+		c := &Change{Ref: Ref{Cluster: "prod", Group: "rbac.authorization.k8s.io", Kind: kind, Name: name}, Time: time.Now()}
+		if obj != "" {
+			c.Object = []byte(obj)
+		}
+		if _, err := s.Record(ctx, c, false, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec("ClusterRole", "a", `{"v":1}`)
+	rec("ClusterRole", "a", `{"v":2}`)
+	rec("ClusterRole", "gone", `{"v":1}`)
+	rec("ClusterRole", "gone", "")
+	rec("ClusterRoleBinding", "a", `{"v":3}`)
+	rec("Other", "x", `{"v":4}`)
+	got, err := s.Current(ctx, "prod", "rbac.authorization.k8s.io", "ClusterRole", "ClusterRoleBinding")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var objs []string
+	for _, c := range got {
+		objs = append(objs, c.Kind+" "+c.Name+" "+string(c.Object))
+	}
+	slices.Sort(objs)
+	if want := []string{`ClusterRole a {"v":2}`, `ClusterRoleBinding a {"v":3}`}; !slices.Equal(objs, want) {
+		t.Errorf("Current = %v, want %v", objs, want)
 	}
 }
