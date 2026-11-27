@@ -54,13 +54,14 @@ func main() {
 func run(ctx context.Context, mode string, args []string) error {
 	fs := flag.NewFlagSet(mode, flag.ExitOnError)
 	token := fs.String("token", os.Getenv("MNEMO_TOKEN"), "shared agent/hub token (default $MNEMO_TOKEN)")
-	var db, listen, webhooks, cluster, hubURL, kubeconfig, resources *string
+	var db, listen, metricsListen, webhooks, cluster, hubURL, kubeconfig, resources *string
 	var auditListen, auditToken, auditCert, auditKey *string
 	var retentionDays, retentionVersions, eventRetentionDays *int
 	var newAuth func(context.Context) (*auth.Auth, error)
 	if mode == "hub" || mode == "all" {
 		db = fs.String("db", "mnemo.db", "SQLite database path")
 		listen = fs.String("listen", ":8080", "HTTP listen address")
+		metricsListen = fs.String("metrics-listen", "", "serve Prometheus /metrics here, e.g. :9090 (default: off); see docs/metrics.md")
 		retentionDays = fs.Int("retention-days", 0, "delete versions older than this many days (0: keep forever); each object's current state is kept")
 		retentionVersions = fs.Int("retention-versions", 0, "keep at most this many versions per object (0: no limit)")
 		webhooks = fs.String("webhooks", "", "outbound webhooks file (default: none); see docs/webhooks.md")
@@ -154,7 +155,7 @@ func run(ctx context.Context, mode string, args []string) error {
 		}
 	}
 
-	errc := make(chan error, 2)
+	errc := make(chan error, 3)
 	if st != nil {
 		srv := &http.Server{Addr: *listen, Handler: routes(st, *token, au), ReadHeaderTimeout: 10 * time.Second}
 		go func() { errc <- srv.ListenAndServe() }()
@@ -166,6 +167,14 @@ func run(ctx context.Context, mode string, args []string) error {
 		}()
 		slog.Info("hub listening", "version", version, "addr", *listen, "db", *db, "ingest", *token != "", "auth", au.Mode(),
 			"webhooks", *webhooks, "retentionDays", *retentionDays, "retentionVersions", *retentionVersions, "eventRetentionDays", *eventRetentionDays)
+		if *metricsListen != "" {
+			// Separate listener: metrics name clusters and webhooks, and skip the access policy.
+			mux := http.NewServeMux()
+			mux.Handle("GET /metrics", metrics(st, hooks))
+			msrv := &http.Server{Addr: *metricsListen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+			go func() { errc <- msrv.ListenAndServe() }()
+			go func() { <-ctx.Done(); msrv.Close() }()
+		}
 		if hooks != nil {
 			go webhook.Run(ctx, st, hooks)
 		}

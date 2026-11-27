@@ -52,6 +52,9 @@ spec:
             {{- if $hub }}
             - --db=/data/mnemo.db
             - --listen=:8080
+            {{- if .Values.hub.metrics.enabled }}
+            - --metrics-listen=:9090
+            {{- end }}
             - --auth={{ $auth.mode }}
             - --retention-days={{ .Values.hub.retention.days }}
             - --retention-versions={{ .Values.hub.retention.versions }}
@@ -108,6 +111,9 @@ spec:
           ports:
             {{- if $hub }}
             - {name: http, containerPort: 8080}
+            {{- if .Values.hub.metrics.enabled }}
+            - {name: metrics, containerPort: 9090}
+            {{- end }}
             {{- end }}
             {{- if $audit }}
             - {name: audit, containerPort: 8443}

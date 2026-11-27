@@ -100,6 +100,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	for _, gvr := range a.Resources {
 		wg.Go(func() { a.watch(ctx, gvr, cps[key(gvr)]) })
 	}
+	wg.Go(func() { a.heartbeat(ctx) })
 	wg.Wait()
 	return ctx.Err()
 }
@@ -231,6 +232,22 @@ func (a *Agent) relist(ctx context.Context, gvr schema.GroupVersionResource) (st
 	})
 	return rv, err
 }
+
+// heartbeat pushes an empty batch every minute, so the hub's last-seen time (and the
+// mnemo_cluster_last_seen_timestamp_seconds metric) tells a quiet cluster from a dead agent.
+func (a *Agent) heartbeat(ctx context.Context) {
+	for {
+		sleep(ctx, heartbeatEvery)
+		if ctx.Err() != nil {
+			return
+		}
+		if err := a.Push(ctx, hub.Batch{Cluster: a.Cluster, ClusterUID: a.uid}); err != nil && ctx.Err() == nil {
+			slog.Warn("heartbeat failed", "err", err) // no retry: the next one comes in a minute
+		}
+	}
+}
+
+var heartbeatEvery = time.Minute
 
 // push retries until the hub accepts the batch: the watch simply waits, and if the
 // hub is down long enough for the resume point to expire, the next relist catches up.
