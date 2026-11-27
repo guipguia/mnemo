@@ -201,7 +201,7 @@ func Handler(s *store.Store, token string, access func(*http.Request) store.Acce
 			return
 		}
 		c, err := s.Get(r.Context(), id)
-		if err == nil && !access(r).Allows(c.Cluster, c.Namespace) {
+		if err == nil && !access(r).Allows(c.Ref) {
 			err = store.ErrNotFound
 		}
 		reply(w)(struct {
@@ -217,7 +217,7 @@ func Handler(s *store.Store, token string, access func(*http.Request) store.Acce
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if rf := ref(q); access(r).Allows(rf.Cluster, rf.Namespace) {
+		if rf := ref(q); access(r).Allows(rf) {
 			reply(w)(s.History(r.Context(), rf, limit))
 		} else {
 			reply(w)([]store.Change{}, nil) // same as an object with no history
@@ -254,7 +254,7 @@ func Handler(s *store.Store, token string, access func(*http.Request) store.Acce
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if rf := ref(q); access(r).Allows(rf.Cluster, rf.Namespace) {
+		if rf := ref(q); access(r).Allows(rf) {
 			reply(w)(s.At(r.Context(), rf, t))
 		} else {
 			reply(w)(nil, store.ErrNotFound)

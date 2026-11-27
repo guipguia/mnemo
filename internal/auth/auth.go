@@ -31,6 +31,7 @@ type User struct {
 type Config struct {
 	Mode   string // none | oidc | proxy
 	Policy *Policy
+	Store  *store.Store // for the policy's rbac mode
 
 	// oidc
 	Issuer, ClientID, ClientSecret string
@@ -55,6 +56,12 @@ func New(ctx context.Context, cfg Config) (*Auth, error) {
 	a := &Auth{cfg: cfg}
 	if cfg.Mode != "none" && cfg.Policy == nil {
 		return nil, errors.New("--policy is required with --auth: without it nobody could see anything")
+	}
+	if cfg.Policy != nil && cfg.Policy.RBAC != nil {
+		if cfg.Store == nil {
+			return nil, errors.New("the policy's rbac mode needs the hub's database")
+		}
+		cfg.Policy.RBAC.store = cfg.Store
 	}
 	switch cfg.Mode {
 	case "none":

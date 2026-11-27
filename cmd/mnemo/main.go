@@ -63,7 +63,7 @@ func run(ctx context.Context, mode string, args []string) error {
 	var auditListen, auditToken, auditCert, auditKey *string
 	var agentListen, agentCert, agentKey, agentCA, hubCA, clientCert, clientKey *string
 	var retentionDays, retentionVersions, eventRetentionDays *int
-	var newAuth func(context.Context) (*auth.Auth, error)
+	var newAuth func(context.Context, *store.Store) (*auth.Auth, error)
 	if mode == "hub" || mode == "all" {
 		db = fs.String("db", "", "SQLite database path, or a postgres:// URL (default $MNEMO_DB, then mnemo.db); see docs/postgres.md")
 		listen = fs.String("listen", ":8080", "HTTP listen address")
@@ -109,9 +109,6 @@ func run(ctx context.Context, mode string, args []string) error {
 			return errors.New("hub mode needs --token, or agents can't push")
 		}
 		var err error
-		if au, err = newAuth(ctx); err != nil {
-			return err
-		}
 		if *webhooks != "" {
 			if hooks, err = webhook.Load(*webhooks); err != nil {
 				return err
@@ -121,6 +118,9 @@ func run(ctx context.Context, mode string, args []string) error {
 			return err
 		}
 		defer st.Close()
+		if au, err = newAuth(ctx, st); err != nil {
+			return err
+		}
 	}
 
 	var ag *agent.Agent

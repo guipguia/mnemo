@@ -18,7 +18,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/guipguia/mnemo/internal/store"
 )
+
+var shopRef = store.Ref{Cluster: "prod", Namespace: "shop", Kind: "ConfigMap", Name: "a"}
 
 func writePolicy(t *testing.T, yaml string) *Policy {
 	t.Helper()
@@ -55,7 +59,7 @@ func TestPolicy(t *testing.T) {
 		{User{"bob@example.com", nil}, "prod", "shop", true},
 		{User{"eve", []string{"everyone"}}, "prod", "shop", false},
 	} {
-		if got := p.Access(tc.u).Allows(tc.cluster, tc.ns); got != tc.want {
+		if got := p.Access(tc.u).Allows(store.Ref{Cluster: tc.cluster, Namespace: tc.ns, Kind: "ConfigMap"}); got != tc.want {
 			t.Errorf("%v on %s/%s: %v, want %v", tc.u, tc.cluster, tc.ns, got, tc.want)
 		}
 	}
@@ -81,7 +85,7 @@ func TestProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, a.Access(r).Allows("prod", "shop"))
+		fmt.Fprint(w, a.Access(r).Allows(shopRef))
 	}))
 	call := func(remote, user, groups string) (int, string) {
 		r := httptest.NewRequest("GET", "/api/v1/changes", nil)
@@ -164,7 +168,7 @@ func TestOIDCLogin(t *testing.T) {
 	app := http.NewServeMux()
 	app.Handle("/auth/", a.Routes())
 	app.Handle("/", a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, a.Access(r).Allows("prod", "shop"))
+		fmt.Fprint(w, a.Access(r).Allows(shopRef))
 	})))
 	do := func(path string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("GET", path, nil)

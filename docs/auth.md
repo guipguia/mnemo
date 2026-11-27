@@ -36,6 +36,38 @@ rules:
   granting a whole cluster.
 - Objects outside your access look exactly like objects that don't exist (empty history, 404).
 
+### RBAC mode
+
+Instead of (or as well as) listing teams in the policy, let each cluster's own Kubernetes
+RBAC decide: a user sees, kind by kind, what the cluster lets them `get`, `list` or `watch`.
+
+```yaml
+rbac:
+  userPrefix: "oidc:"     # the API server's --oidc-username-prefix, if any
+  groupPrefix: "oidc:"    # its --oidc-groups-prefix
+rules:                    # optional: rules still add to what RBAC grants
+- groups: [sre]
+```
+
+The hub has no credentials for your clusters, so it evaluates the RBAC objects the agents
+record (Roles, ClusterRoles, RoleBindings, ClusterRoleBindings: watched by default). For a
+user `alice` in group `team-shop`, a RoleBinding in `shop` binding `User oidc:alice` or
+`Group oidc:team-shop` to the `view` ClusterRole shows them the kinds `view` can read in
+`shop`, and nothing else.
+
+- **Identities must match.** The username and groups from your login (`--oidc-username-claim`,
+  the proxy headers) plus the prefixes must be the names your bindings use. With EKS IAM,
+  GKE Google accounts and similar, they often aren't: check a few users on the
+  "Can see" line in the UI header.
+- Up to 30 seconds stale: the hub reloads the recorded RBAC at most every 30 seconds, so a
+  revoked binding takes that long to apply (plus however long the agent takes to see it).
+- Narrower than Kubernetes, never wider: rules limited to `resourceNames`, subresources,
+  ServiceAccount subjects and implicit groups (`system:authenticated`) grant nothing.
+- Events are shown with the object they're about, so you need access to that object's kind.
+- Kinds are matched to resource names by the usual plural (`NetworkPolicy` →
+  `networkpolicies`). A custom resource with an irregular plural won't match.
+- With OIDC, the session keeps only groups that a policy rule or a recorded binding names.
+
 ## OIDC
 
 Register mnemo as a web application (confidential client) in your IdP with the redirect URL

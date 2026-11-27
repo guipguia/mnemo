@@ -233,9 +233,12 @@ Not to be confused with the inbound audit webhook used for attribution.
   (headers from an auth proxy, trusted only from configured CIDRs). See [auth.md](auth.md).
 - **What:** a policy maps users and IdP groups to clusters × namespaces. Enforced in SQL for
   the feed (so limits stay correct) and per object elsewhere. Denied objects look missing.
-- **Why not Kubernetes RBAC (yet):** the hub has no credentials for agent clusters, so it
+- **Kubernetes RBAC, optionally:** the hub has no credentials for agent clusters, so it
   can't run a SubjectAccessReview, and IdP identities often don't match cluster identities
-  (e.g. EKS IAM). Evaluating the RBAC objects mnemo already records is a possible later mode.
+  (e.g. EKS IAM). So the policy file stays the default, and an opt-in mode evaluates the
+  RBAC objects mnemo already records: per kind (scopes gain an API group and resource
+  list), from a snapshot of the latest Roles and bindings reloaded at most every 30s. See
+  [auth.md](auth.md#rbac-mode).
 - `kubectl mnemo` plugin, e.g. `kubectl mnemo diff deploy/api --at 2h`. See
   [kubectl-plugin.md](kubectl-plugin.md).
 
