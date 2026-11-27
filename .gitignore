@@ -10,3 +10,4 @@ demo/node_modules/
 /kubectl-mnemo
 headlamp/dist/
 headlamp/*.tar.gz
+headlamp/.eslintcache
