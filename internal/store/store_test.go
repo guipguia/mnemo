@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"slices"
@@ -379,6 +380,16 @@ func TestHeldAudits(t *testing.T) {
 		if got, err := w.TakeHeldAudits(ctx, del); err != nil || len(got) != 1 || got[0].User != "dave" {
 			t.Errorf("deletion: %+v, %v; want dave's", got, err)
 		}
+		// Two held for one change (a person's write, then a no-op write right after): the
+		// first comes first.
+		for _, u := range []string{"alice", "controller"} {
+			if err := w.HoldAudit(ctx, "prod", HeldAudit{Namespace: "shop", Name: "cfg", ResourceVersion: "25", User: u}); err != nil {
+				return err
+			}
+		}
+		if got, _ := w.TakeHeldAudits(ctx, &Change{Ref: mod.Ref, ResourceVersion: "25", Type: Modified}); len(got) != 2 || got[0].User != "alice" {
+			t.Errorf("held order: %+v, want alice first", got)
+		}
 		// A delete answered with the object: its audit has the resourceVersion, no UID.
 		if err := w.HoldAudit(ctx, "prod", HeldAudit{Namespace: "shop", Name: "cfg", ResourceVersion: "31", User: "erin"}); err != nil {
 			return err
@@ -432,5 +443,74 @@ func TestLatestQueryUsesIndex(t *testing.T) {
 	}
 	if p := strings.Join(plan, "; "); !strings.Contains(p, "changes_object") || strings.Contains(p, "TEMP B-TREE") {
 		t.Errorf("plan: %s; want the changes_object index and no sort", p)
+	}
+}
+
+// A database from before a migration gets it on open, keeps its data, and opening again
+// runs nothing twice; a database newer than this mnemo is refused. On both backends.
+func TestMigrate(t *testing.T) {
+	dsn := testDSN(t)
+	driver, ddl, conn := "sqlite", schema, "file:"+dsn
+	if IsPostgres(dsn) {
+		driver, ddl, conn = "pgx", pgSchema, dsn
+	}
+	old, err := sql.Open(driver, conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old.Close()
+	if _, err := old.Exec(ddl); err != nil { // the base schema alone: a pre-migrations mnemo
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`INSERT INTO changes (cluster, api_group, version, kind, namespace, name, uid, resource_version, ts, type, author, source)
+		VALUES ('prod', '', 'v1', 'ConfigMap', 'shop', 'cfg', 'u1', '10', 1, 'added', 'kubectl-create', 'manual')`); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		s, err := Open(dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var v, audited int
+		if err := s.db.QueryRow("SELECT version FROM schema_version").Scan(&v); err != nil || v != len(migrations) {
+			t.Errorf("schema_version = %d, %v; want %d", v, err, len(migrations))
+		}
+		if err := s.db.QueryRow("SELECT audited FROM changes WHERE name = 'cfg'").Scan(&audited); err != nil || audited != 0 {
+			t.Errorf("existing change: audited = %d, %v", audited, err)
+		}
+		s.Close()
+	}
+	if _, err := old.Exec("UPDATE schema_version SET version = version + 1"); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := Open(dsn); err == nil || !strings.Contains(err.Error(), "newer than this mnemo") {
+		t.Errorf("Open on a newer database: %v, want refused", err)
+		if s != nil {
+			s.Close()
+		}
+	}
+}
+
+// Hubs starting together on an empty database all open it: the base schema runs under the
+// write lock too, where CREATE TABLE IF NOT EXISTS would otherwise race.
+func TestOpenConcurrently(t *testing.T) {
+	dsn := testDSN(t)
+	if !IsPostgres(dsn) {
+		t.Skip("several hubs need PostgreSQL ($MNEMO_TEST_POSTGRES); a SQLite file has one")
+	}
+	errs := make(chan error, 6)
+	for range cap(errs) {
+		go func() {
+			s, err := Open(dsn)
+			if err == nil {
+				s.Close()
+			}
+			errs <- err
+		}()
+	}
+	for range cap(errs) {
+		if err := <-errs; err != nil {
+			t.Error(err)
+		}
 	}
 }

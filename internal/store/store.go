@@ -18,7 +18,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// ponytail: one schema applied with IF NOT EXISTS; add versioned migrations on the first schema change.
+// schema is the base schema, applied with IF NOT EXISTS on every start; changes to existing
+// tables go in migrations.
 const schema = `
 CREATE TABLE IF NOT EXISTS changes (
 	id               INTEGER PRIMARY KEY,
@@ -160,6 +161,58 @@ type Store struct {
 	lockDB *sql.DB // PostgreSQL: the leader lock's own connection
 }
 
+// migrations change the schema of existing databases, in order, each once. Append only:
+// schema_version records how many have run. They run in one transaction after the base
+// schema, so: they must work on SQLite and PostgreSQL inside a transaction (no CREATE
+// INDEX CONCURRENTLY), and the base schema must not refer to anything they add (an index
+// on a migrated column goes in a migration too).
+var migrations = []string{
+	// 1: an audit event credits a change only if none has yet (see Reattribute).
+	// INTEGER, not BOOLEAN like drift: the same statement must run on both backends.
+	`ALTER TABLE changes ADD COLUMN audited INTEGER NOT NULL DEFAULT 0`,
+}
+
+// migrate applies the base schema and the migrations a database hasn't had, in one
+// transaction: on PostgreSQL under the write lock, so hubs starting together (even on an
+// empty database, where CREATE TABLE IF NOT EXISTS races) do it once.
+func migrate(d db, ddl string) error {
+	ctx := context.Background()
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, ddl); err != nil {
+		return fmt.Errorf("base schema: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
+		return err
+	}
+	var v int
+	err = tx.QueryRowContext(ctx, `SELECT version FROM schema_version`).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = tx.ExecContext(ctx, `INSERT INTO schema_version (version) VALUES (0)`)
+	}
+	if err != nil {
+		return err
+	}
+	if v > len(migrations) {
+		return fmt.Errorf("database schema version %d is newer than this mnemo knows (%d): run a newer mnemo", v, len(migrations))
+	}
+	if v == len(migrations) {
+		return tx.Commit()
+	}
+	for i := v; i < len(migrations); i++ {
+		if _, err := tx.ExecContext(ctx, migrations[i]); err != nil {
+			return fmt.Errorf("migration %d: %w", i+1, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE schema_version SET version = ?`, len(migrations)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // IsPostgres reports whether dsn names a PostgreSQL database rather than a SQLite file.
 func IsPostgres(dsn string) bool {
 	return strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://")
@@ -181,9 +234,9 @@ func Open(dsn string) (*Store, error) {
 	// ponytail: one connection per hub serializes its reads and writes; across hubs on
 	// PostgreSQL, BeginTx's write lock does. A pool would need per-object locks first.
 	d.SetMaxOpenConns(1)
-	if _, err := d.Exec(ddl); err != nil {
+	if err := migrate(d, ddl); err != nil {
 		d.Close()
-		return nil, fmt.Errorf("apply schema: %w", err)
+		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
 	st := &Store{db: d}
 	if d.pg {
@@ -297,11 +350,13 @@ func (w *Writer) Record(ctx context.Context, c *Change, listed bool, attribute f
 
 // Reattribute calls f on every change in cluster to namespace/name written at resourceVersion
 // rv, or deleting the object with UID uid, then saves the Author, Source and Drift that f set.
-// Empty rv or uid match nothing. It reports how many changes it updated: none if the write
-// was never recorded (e.g. a status-only update).
+// Empty rv or uid match nothing. Only the first audit event for a change counts: a write
+// that changes nothing answers with the current resourceVersion, and must not take the
+// credit for the write that made it. It reports how many changes the write matched,
+// credited now or before: none if it was never recorded (e.g. a status-only update).
 func (w *Writer) Reattribute(ctx context.Context, cluster, namespace, name, rv, uid string, f func(*Change)) (int, error) {
 	tx := w.tx
-	rows, err := tx.QueryContext(ctx, "SELECT "+cols+`, object FROM changes
+	rows, err := tx.QueryContext(ctx, "SELECT "+cols+`, object, audited FROM changes
 		WHERE cluster = ? AND namespace = ? AND name = ?
 		AND ((? != '' AND resource_version = ?) OR (? != '' AND uid = ? AND type = ?))`,
 		cluster, namespace, name, rv, rv, uid, uid, string(Deleted))
@@ -309,13 +364,18 @@ func (w *Writer) Reattribute(ctx context.Context, cluster, namespace, name, rv, 
 		return 0, err
 	}
 	var found []Change
+	matched := 0
 	for rows.Next() {
-		c, err := scan(rows, true)
+		var audited int
+		c, err := scanWith(rows, &audited)
 		if err != nil {
 			rows.Close()
 			return 0, err
 		}
-		found = append(found, c)
+		matched++
+		if audited == 0 {
+			found = append(found, c)
+		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -323,12 +383,12 @@ func (w *Writer) Reattribute(ctx context.Context, cluster, namespace, name, rv, 
 	}
 	for _, c := range found {
 		f(&c)
-		if _, err := tx.ExecContext(ctx, "UPDATE changes SET author = ?, source = ?, drift = ? WHERE id = ?",
+		if _, err := tx.ExecContext(ctx, "UPDATE changes SET author = ?, source = ?, drift = ?, audited = 1 WHERE id = ?",
 			c.Author, c.Source, c.Drift, c.ID); err != nil {
 			return 0, err
 		}
 	}
-	return len(found), nil
+	return matched, nil
 }
 
 // Access is what a caller may see: everything, or the union of Scopes. The zero value sees nothing.
@@ -800,7 +860,16 @@ func (s *Store) list(ctx context.Context, q string, args ...any) ([]Change, erro
 	return out, rows.Err()
 }
 
+// scanWith scans a row of cols, object and then extra columns.
+func scanWith(row interface{ Scan(...any) error }, extra ...any) (Change, error) {
+	return scanRow(row, true, extra...)
+}
+
 func scan(row interface{ Scan(...any) error }, withObject bool) (Change, error) {
+	return scanRow(row, withObject)
+}
+
+func scanRow(row interface{ Scan(...any) error }, withObject bool, extra ...any) (Change, error) {
 	var c Change
 	var ts int64
 	var paths sql.NullString
@@ -810,6 +879,7 @@ func scan(row interface{ Scan(...any) error }, withObject bool) (Change, error) 
 	if withObject {
 		dest = append(dest, &object)
 	}
+	dest = append(dest, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return c, err
 	}

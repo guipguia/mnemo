@@ -125,7 +125,8 @@ func (w *Writer) TakeHeldAudits(ctx context.Context, c *Change) ([]HeldAudit, er
 	where := `cluster = ? AND namespace = ? AND name = ? AND ts >= ?
 		AND ((resource_version = ? AND resource_version != '') OR (? AND uid = ? AND uid != ''))`
 	args := []any{c.Cluster, c.Namespace, c.Name, heldSince(), c.ResourceVersion, c.Type == Deleted, c.UID}
-	rows, err := w.tx.QueryContext(ctx, "SELECT namespace, name, resource_version, uid, author, user_agent FROM held_audits WHERE "+where, args...)
+	// In arrival order: the first audit event for a change is the one that counts.
+	rows, err := w.tx.QueryContext(ctx, "SELECT namespace, name, resource_version, uid, author, user_agent FROM held_audits WHERE "+where+" ORDER BY ts", args...)
 	if err != nil {
 		return nil, err
 	}
