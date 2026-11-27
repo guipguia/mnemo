@@ -111,7 +111,8 @@ func TestRoutes(t *testing.T) {
 	if code, _ := do(open, req{"POST", "/api/v1/ingest", "", "", ""}); code != 401 {
 		t.Errorf("auth none: ingest without token = %d, want 401", code)
 	}
-	// Without a token (mode all, no remote agents), ingest doesn't exist at all.
+	// Without a token (mode all with no remote agents, or pushes moved to --agent-listen),
+	// ingest doesn't exist on this listener at all.
 	noToken := routes(st, "", none)
 	if code, _ := do(noToken, req{"POST", "/api/v1/ingest", "", "", ""}); code != 404 {
 		t.Errorf("no token: ingest = %d, want 404 (not registered)", code)

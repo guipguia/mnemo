@@ -133,7 +133,7 @@ func TestHandler(t *testing.T) {
 		t.Fatalf("checkpoints without token: %d, want 401", code)
 	}
 
-	c1 := NewClient(srv.URL, "secret")
+	c1 := NewClient(srv.URL, "secret", nil)
 	if cp, err := c1.Resume(t.Context(), "prod", "uid-1"); err != nil || cp["v1/configmaps"] != "42" {
 		t.Fatalf("resume: %v, %v", cp, err)
 	}

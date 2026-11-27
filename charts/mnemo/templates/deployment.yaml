@@ -3,6 +3,8 @@
 {{- $agent := include "mnemo.hasAgent" . }}
 {{- $auth := .Values.hub.auth }}
 {{- $audit := and $agent .Values.agent.audit.enabled }}
+{{- $agentListener := and $hub .Values.hub.agentListener.enabled }}
+{{- $agentTLS := and (eq .Values.mode "agent") .Values.agent.tls.secret }}
 {{- $backup := and $hub .Values.hub.backup.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -88,6 +90,17 @@ spec:
             {{- if eq .Values.mode "agent" }}
             - --hub={{ .Values.agent.hubURL }}
             {{- end }}
+            {{- if $agentTLS }}
+            - --hub-ca=/etc/mnemo/agent-tls/ca.crt
+            - --client-cert=/etc/mnemo/agent-tls/tls.crt
+            - --client-key=/etc/mnemo/agent-tls/tls.key
+            {{- end }}
+            {{- if $agentListener }}
+            - --agent-listen=:8444
+            - --agent-tls-cert=/etc/mnemo/agent-listener-tls/tls.crt
+            - --agent-tls-key=/etc/mnemo/agent-listener-tls/tls.key
+            - --agent-ca=/etc/mnemo/agent-listener-tls/ca.crt
+            {{- end }}
             {{- if $audit }}
             - --audit-listen=:8443
             - --audit-tls-cert=/etc/mnemo/audit-tls/tls.crt
@@ -124,6 +137,9 @@ spec:
             {{- if $audit }}
             - {name: audit, containerPort: 8443}
             {{- end }}
+            {{- if $agentListener }}
+            - {name: agents, containerPort: 8444}
+            {{- end }}
           {{- end }}
           {{- if $hub }}
           readinessProbe:
@@ -142,6 +158,12 @@ spec:
             {{- if $audit }}
             - {name: audit-tls, mountPath: /etc/mnemo/audit-tls, readOnly: true}
             {{- end }}
+            {{- if $agentTLS }}
+            - {name: agent-tls, mountPath: /etc/mnemo/agent-tls, readOnly: true}
+            {{- end }}
+            {{- if $agentListener }}
+            - {name: agent-listener-tls, mountPath: /etc/mnemo/agent-listener-tls, readOnly: true}
+            {{- end }}
             {{- if $hub }}
             - {name: data, mountPath: /data}
             {{- if ne $auth.mode "none" }}
@@ -156,6 +178,14 @@ spec:
         {{- if $audit }}
         - name: audit-tls
           secret: {secretName: {{ .Values.agent.audit.tlsSecret }}}
+        {{- end }}
+        {{- if $agentTLS }}
+        - name: agent-tls
+          secret: {secretName: {{ .Values.agent.tls.secret }}}
+        {{- end }}
+        {{- if $agentListener }}
+        - name: agent-listener-tls
+          secret: {secretName: {{ .Values.hub.agentListener.tlsSecret }}}
         {{- end }}
         {{- if $hub }}
         - name: data

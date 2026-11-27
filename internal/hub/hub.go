@@ -237,21 +237,46 @@ func Handler(s *store.Store, token string, access func(*http.Request) store.Acce
 	})
 
 	if token != "" {
-		mux.Handle("POST /api/v1/ingest", RequireToken(token, func(w http.ResponseWriter, r *http.Request) {
-			var b Batch
-			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<20)).Decode(&b); err != nil {
-				IngestFailures.Add(1)
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			reply(w)(struct{}{}, Ingest(r.Context(), s, b))
-		}))
-		mux.Handle("GET /api/v1/checkpoints", RequireToken(token, func(w http.ResponseWriter, r *http.Request) {
-			q := r.URL.Query()
-			reply(w)(Resume(r.Context(), s, q.Get("cluster"), q.Get("uid")))
-		}))
+		agentRoutes(mux, s, token, false)
 	}
 	return mux
+}
+
+// AgentHandler serves only the agent endpoints, for the mTLS agent listener: besides the
+// token, each request's client certificate must name the cluster it pushes for, so one
+// cluster's agent can't write another's history.
+func AgentHandler(s *store.Store, token string) http.Handler {
+	mux := http.NewServeMux()
+	agentRoutes(mux, s, token, true)
+	return mux
+}
+
+func agentRoutes(mux *http.ServeMux, s *store.Store, token string, clusterCert bool) {
+	forbidden := func(w http.ResponseWriter, cluster string) {
+		http.Error(w, fmt.Sprintf("client certificate does not name cluster %q (common name or DNS name)", cluster), http.StatusForbidden)
+	}
+	mux.Handle("POST /api/v1/ingest", RequireToken(token, func(w http.ResponseWriter, r *http.Request) {
+		var b Batch
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<20)).Decode(&b); err != nil {
+			IngestFailures.Add(1)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if clusterCert && !certNames(r, b.Cluster) {
+			IngestFailures.Add(1)
+			forbidden(w, b.Cluster)
+			return
+		}
+		reply(w)(struct{}{}, Ingest(r.Context(), s, b))
+	}))
+	mux.Handle("GET /api/v1/checkpoints", RequireToken(token, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if clusterCert && !certNames(r, q.Get("cluster")) {
+			forbidden(w, q.Get("cluster"))
+			return
+		}
+		reply(w)(Resume(r.Context(), s, q.Get("cluster"), q.Get("uid")))
+	}))
 }
 
 // RequireToken rejects requests without "Authorization: Bearer <token>".

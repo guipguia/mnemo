@@ -3,6 +3,7 @@ package hub
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,8 +18,11 @@ type Client struct {
 	http       *http.Client
 }
 
-func NewClient(hubURL, token string) *Client {
-	return &Client{url: hubURL, token: token, http: &http.Client{Timeout: time.Minute}}
+// NewClient talks to hubURL; tlsConfig (nil: defaults) sets the CA and client certificate.
+func NewClient(hubURL, token string, tlsConfig *tls.Config) *Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.TLSClientConfig = tlsConfig
+	return &Client{url: hubURL, token: token, http: &http.Client{Timeout: time.Minute, Transport: t}}
 }
 
 func (c *Client) Push(ctx context.Context, b Batch) error {

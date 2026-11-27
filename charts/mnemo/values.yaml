@@ -17,8 +17,14 @@ token:
 agent:
   # Name shown in mnemo for this cluster. Required in modes all and agent.
   cluster: ""
-  # Hub URL, mode agent only. e.g. https://mnemo.example.com
+  # Hub URL, mode agent only. e.g. https://mnemo.example.com, or with mTLS the hub's
+  # agent listener: https://mnemo-agents.example.com:8444
   hubURL: ""
+  # Mutual TLS to the hub's agent listener (hub.agentListener). A Secret with tls.crt and
+  # tls.key (this agent's client certificate, naming agent.cluster as its common name or a
+  # DNS name) and ca.crt (the CA to trust for the hub). cert-manager writes all three.
+  tls:
+    secret: ""
   # What to watch, as group/version/resource ("v1/configmaps" for the core group).
   # The agent's read-only ClusterRole is generated from this list. Secrets are refused.
   watch:
@@ -57,6 +63,16 @@ agent:
       nodePort: null
 
 hub:
+  # Take agent pushes only over mutual TLS, on port 8444 of a separate Service
+  # (<release>-agents); the main port then refuses them. See docs/mtls.md.
+  agentListener:
+    enabled: false
+    # Required: a Secret with tls.crt and tls.key (the hub's certificate, valid for the
+    # address agents use) and ca.crt (the CA that signs agent client certificates).
+    tlsSecret: ""
+    service:
+      type: LoadBalancer  # agents in other clusters must reach it
+      port: 8444
   # PostgreSQL instead of SQLite on a volume: name a Secret with key "url", a
   # postgres://user:password@host:5432/db?sslmode=verify-full URL. Then no PVC is created and
   # hub.persistence and hub.backup don't apply (back up the database your usual way).

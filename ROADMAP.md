@@ -35,7 +35,7 @@ Design details: [docs/design.md](docs/design.md).
 - [x] SSO: OIDC login and trusted auth-proxy headers ([docs/auth.md](docs/auth.md))
 - [x] Policy: IdP groups/users → clusters × namespaces
 - [ ] Optional mode: evaluate access against each cluster's recorded Kubernetes RBAC
-- [ ] Agent ↔ hub mTLS
+- [x] Agent ↔ hub mTLS ([docs/mtls.md](docs/mtls.md))
 - [x] Prometheus metrics ([docs/metrics.md](docs/metrics.md))
 - [ ] OpenTelemetry traces
 - [x] MCP server for AI incident agents ([docs/mcp.md](docs/mcp.md))

@@ -39,7 +39,8 @@ can reconstruct any object at any point in time, not just get notified that it c
 - **MCP server:** AI incident agents ask "what changed before this alert?" as tool calls,
   under the same access policy. See [docs/mcp.md](docs/mcp.md).
 - **Multi-cluster:** one hub, one lightweight agent per cluster. Agents push, so the hub never
-  needs credentials for your clusters.
+  needs credentials for your clusters. Optional [mutual TLS](docs/mtls.md) ties each agent to
+  its cluster.
 - **SSO and per-team access:** OIDC (Okta, Entra ID, Google, Keycloak, Dex, ...) or an auth
   proxy; a policy maps groups to clusters and namespaces. See [docs/auth.md](docs/auth.md).
 - **Read-only and small:** get/list/watch on what you choose to watch, nothing else. Secrets
