@@ -7,14 +7,18 @@ Reproduce with the commands below; numbers on your hardware will differ.
 
 ## Ingest
 
+End to end is with `-benchtime 200x`: the benchmark keeps rewriting the same 100 objects, so
+longer runs give each object more versions, and go slower.
+
 | Path | SQLite | PostgreSQL |
 |---|---|---|
 | Store one modified version (diff, attribution, own transaction) | ~7,400 versions/s | ~400 versions/s |
-| End to end: agent batch of 100 over HTTP, JSON, managedFields attribution | ~5,000 objects/s | |
+| End to end: agent batch of 100 over HTTP, JSON, managedFields attribution | ~5,400 objects/s | ~620 objects/s |
 
-Each version is its own transaction, so PostgreSQL's rate is set by its commit latency
-(here ~2.5 ms per commit, in a container); a server with faster commits goes proportionally
-faster. For scale: a busy cluster produces tens of changes per second, and an initial sync of
+Storing one version alone is its own transaction, so PostgreSQL's rate there is set by its
+commit latency (here ~2.5 ms per commit, in a container); a server with faster commits goes
+proportionally faster. End to end, a batch is one transaction, and PostgreSQL's rate is set
+by the round trips each version makes (reading the previous version, writing the new one). For scale: a busy cluster produces tens of changes per second, and an initial sync of
 10,000 objects takes a few seconds on SQLite and under half a minute on PostgreSQL.
 
 The whole test process (hub and client) had under 4 MB of Go heap in use after the end-to-end run.
@@ -57,4 +61,38 @@ The `changes_ts` index behind the feed numbers is created at startup like the re
 schema; on an existing large database the first start after upgrading builds it (about 0.3 s
 per million versions on PostgreSQL here) before serving.
 
-Not measured yet: agent memory and CPU per watched object on a real cluster.
+## Agent on a real cluster
+
+A `mnemo agent` outside the cluster, watching the default resources on a local
+[kind](https://kind.sigs.k8s.io) cluster (Kubernetes 1.37, in a container) and pushing to a
+local hub on SQLite. The objects are ConfigMaps of ~1.2 KB, 16 keys each.
+
+| | Agent memory (RSS) | Agent CPU |
+|---|---|---|
+| Idle, ~240 objects | 27 MB | |
+| Initial sync of 10,000 more objects: 4.5 s | 40 MB peak | 1.3 s |
+| Watching 10,000 objects | 29 MB | |
+| 5,000 updates in 23 s (`kubectl apply`), recorded as they happen | 29 MB | 4 s (~0.8 ms per change) |
+| Restart with 10,000 objects: resumes from its checkpoints, no relist | 22 MB | ~0 s |
+
+- **Memory barely grows with the number of objects watched:** the agent keeps no copy of
+  them (the hub compares versions). A relist reads 500 objects at a time and keeps only each
+  object's name until the end, about 50 bytes each: before paging, the same initial sync
+  peaked at 247 MB.
+- Pages are pushed at the hub's pace. If a relist outlasts the API server's snapshot (etcd
+  compacts every 5 minutes by default; at PostgreSQL's ~620 objects/s that is a couple of
+  hundred thousand objects in one resource, or a hub outage mid-relist), the agent reads
+  every page again first, holding them converted, and pushes them after. That holds about
+  2 KB per object for these ConfigMaps (more for larger objects): around 400 MB at 200,000,
+  and up to about twice that in RSS before Go collects. Raise the agent's memory limit
+  (512Mi by default) for resources that large.
+- **CPU follows the change rate:** a busy cluster's tens of changes per second cost a few
+  percent of a core.
+- The hub used 36 MB at most through all of the above.
+
+The chart's default requests (`50m` CPU, `64Mi` memory) fit this; give more memory
+headroom on clusters with many large objects (a page of 500 big CRs).
+
+To reproduce: create a kind cluster, run `mnemo hub` and `mnemo agent --kubeconfig` locally,
+apply ConfigMaps in bulk (`kubectl apply --server-side -f list.json`), and read `VmHWM`,
+`VmRSS` and the CPU times from `/proc/<agent pid>/status` and `/stat`.

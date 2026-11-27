@@ -1,24 +1,53 @@
 package hub
 
 import (
+	"database/sql"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/guipguia/mnemo/internal/store"
 )
 
+// pgSchema creates a schema in the PostgreSQL at dsn, drops it when b ends, and returns a
+// DSN that uses it.
+func pgSchema(b *testing.B, dsn string) string {
+	b.Helper()
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		b.Fatal(err)
+	}
+	name := fmt.Sprintf("bench_%d", time.Now().UnixNano())
+	if _, err := db.Exec("CREATE SCHEMA " + name); err != nil {
+		db.Close()
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { db.Exec("DROP SCHEMA " + name + " CASCADE"); db.Close() })
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + "search_path=" + name
+}
+
 // BenchmarkIngestHTTP is an agent pushing to the hub end to end: JSON over HTTP with the
 // token, batches of 100 modified objects with managedFields, attribution, and storage
-// (SQLite). See docs/benchmarks.md.
+// (SQLite, or PostgreSQL with $MNEMO_TEST_POSTGRES, in a schema of its own). See
+// docs/benchmarks.md.
 //
 //	go test ./internal/hub -run '^$' -bench IngestHTTP -benchtime 200x
 func BenchmarkIngestHTTP(b *testing.B) {
-	st, err := store.Open(filepath.Join(b.TempDir(), "mnemo.db"))
+	dsn := filepath.Join(b.TempDir(), "mnemo.db")
+	if pg := os.Getenv("MNEMO_TEST_POSTGRES"); pg != "" {
+		dsn = pgSchema(b, pg)
+	}
+	st, err := store.Open(dsn)
 	if err != nil {
 		b.Fatal(err)
 	}
