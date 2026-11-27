@@ -50,6 +50,9 @@ func TestCursorsClustersReattribute(t *testing.T) {
 	if err := s.Ping(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if n, err := s.Size(ctx); err != nil || n <= 0 {
+		t.Errorf("size: %d, %v", n, err)
+	}
 	if err := s.RegisterCluster(ctx, "prod", "u1"); err != nil {
 		t.Fatal(err)
 	}

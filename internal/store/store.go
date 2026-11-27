@@ -166,10 +166,14 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
-// Size is the database size in bytes, excluding the WAL.
+// Size is the database size in bytes: SQLite without the WAL, or the whole PostgreSQL database.
 func (s *Store) Size(ctx context.Context) (int64, error) {
+	q := "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()"
+	if s.db.pg {
+		q = "SELECT pg_database_size(current_database())"
+	}
 	var n int64
-	err := s.db.QueryRowContext(ctx, "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()").Scan(&n)
+	err := s.db.QueryRowContext(ctx, q).Scan(&n)
 	return n, err
 }
 
