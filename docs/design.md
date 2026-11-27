@@ -248,7 +248,8 @@ Meet responders where they already are; the mnemo UI is not the only surface.
 
 - **Grafana:** an outbound webhook format posts to the annotations API, so changes appear as
   markers on existing dashboards. See [webhooks.md](webhooks.md#grafana-annotations).
-- **Headlamp:** plugin showing the object timeline inside Headlamp (a CNCF project).
+- **Headlamp:** a plugin shows the object timeline on each resource page in Headlamp (a CNCF
+  project), reaching the hub through the API server's service proxy. See [headlamp.md](headlamp.md).
 - **MCP server / query API for AI agents:** "what changed before this alert?" as a tool call.
   Read-only, same RBAC rules as the UI.
 - **Slack and others:** via outbound webhooks.
