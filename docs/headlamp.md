@@ -41,8 +41,10 @@ instead.
   ```
 
   How the API server's traffic appears to a NetworkPolicy depends on the cluster (its node
-  IPs, or a managed control plane's range): check yours. If the agents run elsewhere, use
-  `--agent-listen` with mTLS ([mtls.md](mtls.md)) and allow that port separately.
+  IPs, or a managed control plane's range): check yours. The policy covers every port of
+  the pod, so also allow what you enable: `metrics` (9090) from Prometheus, the audit
+  webhook (8443) from the API server, and `agents` (8444, `--agent-listen` with mTLS, see
+  [mtls.md](mtls.md)) from remote agents.
 - If you need mnemo's policy per user, use the mnemo UI with `--auth oidc` or `proxy`
   instead of this plugin.
 

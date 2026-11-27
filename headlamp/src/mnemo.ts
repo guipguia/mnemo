@@ -25,13 +25,14 @@ function request(cluster: string | null, path: string) {
 }
 
 // Where the hub is and what it calls each cluster rarely change: look them up once per
-// session. A failed lookup is retried next time.
+// session.
 const cache = new Map<string, Promise<unknown>>();
 function once<T>(key: string, f: () => Promise<T>): Promise<T> {
   let p = cache.get(key) as Promise<T> | undefined;
   if (!p) {
     p = f();
-    p.catch(() => cache.delete(key));
+    // Retry failures and "not found" (mnemo may be installed, or the cluster registered, later).
+    p.then(v => v ?? cache.delete(key), () => cache.delete(key));
     cache.set(key, p);
   }
   return p;
