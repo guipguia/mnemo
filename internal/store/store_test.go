@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -404,5 +405,32 @@ func TestHeldAudits(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Record's lookup of the newest version must come from the index, not a sort of every
+// version of the object (ingest slowed down as history grew).
+func TestLatestQueryUsesIndex(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	rows, err := s.db.QueryContext(context.Background(), "EXPLAIN QUERY PLAN "+latestQuery, "c", "g", "k", "n", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	if p := strings.Join(plan, "; "); !strings.Contains(p, "changes_object") || strings.Contains(p, "TEMP B-TREE") {
+		t.Errorf("plan: %s; want the changes_object index and no sort", p)
 	}
 }

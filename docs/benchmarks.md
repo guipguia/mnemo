@@ -7,19 +7,20 @@ Reproduce with the commands below; numbers on your hardware will differ.
 
 ## Ingest
 
-End to end is with `-benchtime 200x`: the benchmark keeps rewriting the same 100 objects, so
-longer runs give each object more versions, and go slower.
-
 | Path | SQLite | PostgreSQL |
 |---|---|---|
-| Store one modified version (diff, attribution, own transaction) | ~7,400 versions/s | ~400 versions/s |
-| End to end: agent batch of 100 over HTTP, JSON, managedFields attribution | ~5,400 objects/s | ~620 objects/s |
+| Store one modified version (diff, attribution, own transaction) | ~7,000 versions/s | ~500 versions/s |
+| End to end: agent batch of 100 over HTTP, JSON, managedFields attribution | ~7,800 objects/s | ~2,800 objects/s |
 
 Storing one version alone is its own transaction, so PostgreSQL's rate there is set by its
 commit latency (here ~2.5 ms per commit, in a container); a server with faster commits goes
 proportionally faster. End to end, a batch is one transaction, and PostgreSQL's rate is set
-by the round trips each version makes (reading the previous version, writing the new one). For scale: a busy cluster produces tens of changes per second, and an initial sync of
-10,000 objects takes a few seconds on SQLite and under half a minute on PostgreSQL.
+by the round trips each version makes (reading the previous version, writing the new one).
+Both rates hold as an object's history grows: the previous version is read from the index,
+not found by sorting the object's versions (which made ingest slow down as history grew,
+to ~1,800 and ~900 objects/s at 800 versions per object, before that was fixed). For scale:
+a busy cluster produces tens of changes per second, and an initial sync of 10,000 objects
+takes a few seconds on either backend.
 
 The whole test process (hub and client) had under 4 MB of Go heap in use after the end-to-end run.
 
@@ -72,7 +73,7 @@ local hub on SQLite. The objects are ConfigMaps of ~1.2 KB, 16 keys each.
 | Idle, ~240 objects | 27 MB | |
 | Initial sync of 10,000 more objects: 4.5 s | 40 MB peak | 1.3 s |
 | Watching 10,000 objects | 29 MB | |
-| 5,000 updates in 23 s (`kubectl apply`), recorded as they happen | 29 MB | 4 s (~0.8 ms per change) |
+| 5,000 updates in 23 s (`kubectl apply`), recorded as they happen | 29 MB | 1.7 s (~0.34 ms per change, pushed in batches) |
 | Restart with 10,000 objects: resumes from its checkpoints, no relist | 22 MB | ~0 s |
 
 - **Memory barely grows with the number of objects watched:** the agent keeps no copy of
@@ -80,7 +81,7 @@ local hub on SQLite. The objects are ConfigMaps of ~1.2 KB, 16 keys each.
   object's name until the end, about 50 bytes each: before paging, the same initial sync
   peaked at 247 MB.
 - Pages are pushed at the hub's pace. If a relist outlasts the API server's snapshot (etcd
-  compacts every 5 minutes by default; at PostgreSQL's ~620 objects/s that is a couple of
+  compacts every 5 minutes by default; at PostgreSQL's ~2,800 objects/s that is several
   hundred thousand objects in one resource, or a hub outage mid-relist), the agent reads
   every page again first, holding them converted, and pushes them after. That holds about
   2 KB per object for these ConfigMaps (more for larger objects): around 400 MB at 200,000,
