@@ -76,9 +76,12 @@ hub:
   # PostgreSQL instead of SQLite on a volume: name a Secret with key "url", a
   # postgres://user:password@host:5432/db?sslmode=verify-full URL. Then no PVC is created and
   # hub.persistence and hub.backup don't apply (back up the database your usual way).
-  # Still one hub at a time. See docs/postgres.md.
+  # Allows hub.replicas > 1. See docs/postgres.md.
   database:
     existingSecret: ""
+  # Hubs to run, with hub.database (PostgreSQL) in mode hub only. They share the database
+  # and elect a leader for webhooks and retention. See docs/postgres.md.
+  replicas: 1
   persistence:
     size: 5Gi
     storageClass: ""

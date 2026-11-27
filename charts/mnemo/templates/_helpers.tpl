@@ -33,6 +33,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if and (eq .Values.mode "agent") .Values.hub.agentListener.enabled }}{{ fail "hub.agentListener is for the hub; in mode agent, use agent.tls" }}{{ end }}
 {{- if and (ne .Values.mode "agent") .Values.agent.tls.secret }}{{ fail "agent.tls is for mode agent; the agent in mode all pushes in-process" }}{{ end }}
 {{- if and (include "mnemo.hasHub" .) .Values.hub.agentListener.enabled (not .Values.hub.agentListener.tlsSecret) }}{{ fail "hub.agentListener.tlsSecret is required: a Secret with tls.crt, tls.key and ca.crt" }}{{ end }}
+{{- if and (gt (int .Values.hub.replicas) 1) (not (and (eq .Values.mode "hub") .Values.hub.database.existingSecret)) }}{{ fail "hub.replicas > 1 needs mode hub and hub.database (PostgreSQL): SQLite has one writer, and in mode all each replica would run an agent" }}{{ end }}
 {{- if and (include "mnemo.hasHub" .) .Values.hub.database.existingSecret .Values.hub.backup.enabled }}{{ fail "hub.backup (Litestream) backs up SQLite; with hub.database, back up PostgreSQL your usual way" }}{{ end }}
 {{- if and (include "mnemo.hasHub" .) .Values.hub.backup.enabled (not .Values.hub.backup.url) }}{{ fail "hub.backup.url is required: where Litestream replicates the database" }}{{ end }}
 {{- range .Values.agent.watch }}{{ if or (eq . "v1/secrets") (hasSuffix "/secrets" .) }}{{ fail "secrets are never recorded: mnemo would store their values" }}{{ end }}{{ end }}

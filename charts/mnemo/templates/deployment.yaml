@@ -12,8 +12,12 @@ metadata:
   name: {{ include "mnemo.fullname" . }}
   labels: {{- include "mnemo.labels" . | nindent 4 }}
 spec:
-  replicas: 1  # one hub: SQLite has one writer, and webhooks and retention run in the hub
+  {{- if .Values.hub.database.existingSecret }}
+  replicas: {{ .Values.hub.replicas }}  # PostgreSQL: hubs share it, and elect a leader for webhooks and retention
+  {{- else }}
+  replicas: 1  # SQLite: one hub
   strategy: {type: Recreate}  # the ReadWriteOnce volume can't attach to two pods
+  {{- end }}
   selector:
     matchLabels: {{- include "mnemo.selector" . | nindent 6 }}
   template:
