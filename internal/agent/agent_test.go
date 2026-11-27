@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -58,6 +59,9 @@ func newHarness(t *testing.T) *harness {
 		h.listN.Add(1)
 		select {
 		case l := <-h.lists:
+			if l.Object["error"] != nil { // a list the test wants to fail
+				return true, nil, l.Object["error"].(error)
+			}
 			return true, l, nil
 		case <-time.After(5 * time.Second):
 			return true, nil, errors.New("test gave no list")
@@ -355,22 +359,35 @@ func TestStopsWhenSuperseded(t *testing.T) {
 }
 
 // A relist in pages: every page's objects are recorded, and only objects in none of the
-// pages count as deleted, once the last page is in.
+// pages count as deleted, once the last page is in. A page whose snapshot was compacted
+// away (410) makes the relist read the resource whole instead of starting over in pages.
 func TestRelistPages(t *testing.T) {
 	h := newHarness(t)
 	h.lists <- list("100", cm("a", "90", "kubectl-create", nil), cm("gone", "91", "kubectl-create", nil))
 	stop := h.run()
+	defer stop()
 	w := h.nextWatch("100")
 
-	page1 := list("200", cm("a", "90", "kubectl-create", nil))
-	page1.SetContinue("page-2")
-	h.lists <- page1
-	h.lists <- list("200", cm("b", "190", "kubectl-create", nil))
+	page := func(rv, cont string, items ...*unstructured.Unstructured) *unstructured.UnstructuredList {
+		l := list(rv, items...)
+		l.SetContinue(cont)
+		return l
+	}
+	expired := &unstructured.UnstructuredList{Object: map[string]any{
+		"error": apierrors.NewResourceExpired("continue token expired")}}
+	h.lists <- page("200", "page-2", cm("a", "90", "kubectl-create", nil))
+	h.lists <- expired // page 2: too late
+	h.lists <- list("210", cm("a", "90", "kubectl-create", nil), cm("b", "190", "kubectl-create", nil))
 	w.Error(&metav1.Status{Status: metav1.StatusFailure, Code: 410, Reason: metav1.StatusReasonExpired})
-	h.nextWatch("200")
+	h.nextWatch("210")
 	h.wantHistory("b", "baseline:kubectl-create")
-	h.wantHistory("a", "baseline:kubectl-create") // on page 1: not deleted
+	h.wantHistory("a", "baseline:kubectl-create") // in the snapshot: never deleted
 	h.wantHistory("gone", "deleted:", "baseline:kubectl-create")
-	h.checkpoint("200")
-	stop()
+	h.checkpoint("210")
+
+	// The fake client drops Limit and Continue from what it records, so the calls are
+	// counted: the first list, page 1, page 2 (expired), then the whole list.
+	if n := h.listN.Load(); n != 4 {
+		t.Errorf("%d List calls, want 4", n)
+	}
 }

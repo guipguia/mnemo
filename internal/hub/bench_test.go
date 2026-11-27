@@ -18,12 +18,14 @@ import (
 // pgSchema creates a schema in the PostgreSQL at dsn, drops it when b ends, and returns a
 // DSN that uses it.
 func pgSchema(b *testing.B, dsn string) string {
+	b.Helper()
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		b.Fatal(err)
 	}
 	name := fmt.Sprintf("bench_%d", time.Now().UnixNano())
 	if _, err := db.Exec("CREATE SCHEMA " + name); err != nil {
+		db.Close()
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { db.Exec("DROP SCHEMA " + name + " CASCADE"); db.Close() })

@@ -198,17 +198,25 @@ func (a *Agent) consume(ctx context.Context, gvr schema.GroupVersionResource, w 
 // relist sends every object as a listed item, then tells the hub the list is complete
 // so it can record deletions that happened while nobody was watching.
 func (a *Agent) relist(ctx context.Context, gvr schema.GroupVersionResource) (string, error) {
-	// In pages, pushed as they come: memory stays at a page, not the whole resource. Every
-	// page is served from the first one's snapshot, so they share its resourceVersion.
+	// In pages, pushed as they come: memory stays at a page (plus a name per object for the
+	// Synced list), not the whole resource. Every page is served from the first one's
+	// snapshot, so they share its resourceVersion.
 	opts := metav1.ListOptions{Limit: listPage}
 	var rv, kind string
 	var keep []string
-	var deploys []store.Deploy
-	now := time.Now()
+	now := time.Now() // one time for the whole relist: when it started
 	for {
 		list, err := a.Client.Resource(gvr).List(ctx, opts)
+		if opts.Continue != "" && (apierrors.IsResourceExpired(err) || apierrors.IsGone(err)) {
+			// The snapshot was compacted away before the pages were read (they go at the
+			// hub's pace): paging again would hit the same limit, so read it whole, as
+			// client-go's pager does. Pages already pushed are only upserts.
+			slog.Warn("relist outlasted its snapshot; listing the rest unpaged", "resource", key(gvr), "pagesRead", len(keep)/listPage)
+			opts, rv, keep = metav1.ListOptions{}, "", nil
+			continue
+		}
 		if err != nil {
-			return "", err // an expired continue token (410) included: the caller relists from scratch
+			return "", err
 		}
 		if rv == "" {
 			rv, kind = list.GetResourceVersion(), strings.TrimSuffix(list.GetKind(), "List")
@@ -224,17 +232,19 @@ func (a *Agent) relist(ctx context.Context, gvr schema.GroupVersionResource) (st
 				return "", err
 			}
 			b.Items = append(b.Items, it)
-			deploys = append(deploys, toDeploys(gvr, &list.Items[i], now)...)
+			b.Deploys = append(b.Deploys, toDeploys(gvr, &list.Items[i], now)...) // upserts: fine per page
 			keep = append(keep, it.Namespace+"/"+it.Name)
 		}
 		if opts.Continue = list.GetContinue(); opts.Continue == "" {
 			// The last page also says the relist is complete.
 			b.Checkpoints = map[string]string{key(gvr): rv}
 			if gvr != eventsGVR { // Events are archived, not mirrored: no Synced, so expired ones stay in the hub
-				b.Deploys = deploys
 				b.Synced = []hub.Synced{{Group: gvr.Group, Kind: kind, Keep: keep, Time: now}}
 			}
 			return rv, a.push(ctx, key(gvr), b)
+		}
+		if len(b.Items)+len(b.Events) == 0 {
+			continue // a page can come back empty (filtered); nothing to push
 		}
 		if err := a.push(ctx, key(gvr), b); err != nil {
 			return "", err

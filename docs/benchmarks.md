@@ -7,6 +7,9 @@ Reproduce with the commands below; numbers on your hardware will differ.
 
 ## Ingest
 
+End to end is with `-benchtime 200x`: the benchmark keeps rewriting the same 100 objects, so
+longer runs give each object more versions, and go slower.
+
 | Path | SQLite | PostgreSQL |
 |---|---|---|
 | Store one modified version (diff, attribution, own transaction) | ~7,400 versions/s | ~400 versions/s |
@@ -72,9 +75,14 @@ local hub on SQLite. The objects are ConfigMaps of ~1.2 KB, 16 keys each.
 | 5,000 updates in 23 s (`kubectl apply`), recorded as they happen | 29 MB | 4 s (~0.8 ms per change) |
 | Restart with 10,000 objects: resumes from its checkpoints, no relist | 22 MB | ~0 s |
 
-- **Memory doesn't grow with the number of objects watched:** the agent keeps no copy of
-  them (the hub compares versions). A relist reads 500 objects at a time, so its peak is a
-  page, not the resource: before paging, the same initial sync peaked at 247 MB.
+- **Memory barely grows with the number of objects watched:** the agent keeps no copy of
+  them (the hub compares versions). A relist reads 500 objects at a time and keeps only each
+  object's name until the end, about 50 bytes each: before paging, the same initial sync
+  peaked at 247 MB.
+- Pages are read at the hub's pace. If a relist outlasts the API server's snapshot (etcd
+  compacts every 5 minutes by default; at PostgreSQL's ~620 objects/s that is a few
+  hundred thousand objects in one resource), the agent reads the rest in one unpaged list,
+  as client-go's pager does, so the relist completes at the cost of that memory peak.
 - **CPU follows the change rate:** a busy cluster's tens of changes per second cost a few
   percent of a core.
 - The hub used 36 MB at most through all of the above.
