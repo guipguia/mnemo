@@ -154,12 +154,19 @@ func newAnnotation(c store.Change, link string) annotation {
 
 // Run delivers to every webhook until ctx is done.
 func Run(ctx context.Context, st *store.Store, c *Config) {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := newClient()
 	var wg sync.WaitGroup
 	for _, w := range c.Webhooks {
 		wg.Go(func() { w.run(ctx, st, strings.TrimSuffix(c.URL, "/"), client) })
 	}
 	wg.Wait()
+}
+
+// newClient follows no redirects: on a 301-303 Go would resend the POST as a GET without
+// its body, and that GET's 2xx would count as delivered. A 3xx is a failed delivery instead.
+func newClient() *http.Client {
+	return &http.Client{Timeout: 10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 // poll is how often a caught-up webhook checks for new changes.
@@ -253,7 +260,7 @@ func (w Webhook) deliver(ctx context.Context, client *http.Client, base string, 
 			return true
 		}
 		level := slog.LevelWarn
-		if errors.Is(err, errRejected) {
+		if errors.Is(err, errRejected) || errors.Is(err, errRedirected) {
 			level = slog.LevelError // won't fix itself: later changes wait until someone acts
 		}
 		log.Log(ctx, level, "delivery failed, retrying", "change", c.ID, "err", err, "in", backoff)
@@ -284,6 +291,9 @@ func (w Webhook) post(ctx context.Context, client *http.Client, body []byte, id 
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode/100 == 3 {
+		return fmt.Errorf("%s: %w", resp.Status, errRedirected) // not the Location: it may hold the secret too
+	}
 	if resp.StatusCode/100 != 2 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
@@ -296,6 +306,9 @@ func (w Webhook) post(ctx context.Context, client *http.Client, body []byte, id 
 
 // errRejected marks a 401/403: a token or permission problem that retrying won't fix.
 var errRejected = errors.New("check the webhook's token and its permissions")
+
+// errRedirected marks a 3xx: the url is out of date, which retrying won't fix either.
+var errRedirected = errors.New("redirected; set the webhook's url to where it points")
 
 // Sign is the hex HMAC-SHA256 of body: receivers compare it to X-Mnemo-Signature
 // (after "sha256=") in constant time.

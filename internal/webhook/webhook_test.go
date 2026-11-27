@@ -195,3 +195,19 @@ func TestPostErrorHidesURL(t *testing.T) {
 		t.Errorf("err = %v, want an error without the URL", err)
 	}
 }
+
+func TestPostRefusesRedirects(t *testing.T) {
+	got := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/moved" {
+			got++ // a GET without the body, if followed
+			return
+		}
+		http.Redirect(w, r, "/moved", http.StatusFound)
+	}))
+	defer srv.Close()
+	w := Webhook{Name: "x", URL: srv.URL + "/hook"}
+	if err := w.post(t.Context(), newClient(), []byte(`{}`), 1); !errors.Is(err, errRedirected) || got != 0 {
+		t.Errorf("redirected delivery: err %v, %d requests to the target; want a failure and none", err, got)
+	}
+}
