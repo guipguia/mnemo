@@ -3,6 +3,7 @@ package store
 import (
 	"crypto/rand"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -122,5 +123,57 @@ func TestEventWithNUL(t *testing.T) {
 		Message: "probe said \x00 nothing", Count: 1, FirstTime: now, LastTime: now}
 	if err := s.RecordEvents(t.Context(), "prod", []Event{e}); err != nil {
 		t.Fatal(err) // PostgreSQL rejects NUL in text: one bad event must not stall the batch
+	}
+}
+
+func TestFresh(t *testing.T) {
+	ctx := t.Context()
+	s, err := openTest(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	// fresh is "fresh", "stale", or "superseded".
+	fresh := func(session, stream string, seq int64) string {
+		t.Helper()
+		var ok bool
+		err := s.Write(ctx, func(w *Writer) (err error) { ok, err = w.Fresh(ctx, "prod", session, stream, seq); return })
+		switch {
+		case errors.Is(err, ErrSuperseded):
+			return "superseded"
+		case err != nil:
+			t.Fatal(err)
+		case ok:
+			return "fresh"
+		}
+		return "stale"
+	}
+	setSession := func(session string) {
+		if err := s.Write(ctx, func(w *Writer) error { return w.SetSession(ctx, "prod", session) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setSession("run1")
+	for i, tc := range []struct {
+		session, stream string
+		seq             int64
+		want            string
+	}{
+		{"", "", 0, "fresh"}, // an agent from before sessions
+		{"run1", "v1/configmaps", 1, "fresh"},
+		{"run1", "v1/configmaps", 1, "stale"},       // a resend of one stored
+		{"run1", "v1/configmaps", 3, "fresh"},       // gaps are fine
+		{"run1", "v1/configmaps", 2, "stale"},       // older than one stored
+		{"run1", "apps/v1/deployments", 1, "fresh"}, // streams are independent
+		{"run1", "", 0, "fresh"},                    // unordered
+		{"run0", "v1/configmaps", 9, "superseded"},  // an earlier run
+	} {
+		if got := fresh(tc.session, tc.stream, tc.seq); got != tc.want {
+			t.Errorf("%d %+v: fresh = %v", i, tc, got)
+		}
+	}
+	setSession("run2") // the agent restarted
+	if fresh("run2", "v1/configmaps", 1) != "fresh" || fresh("run1", "v1/configmaps", 4) != "superseded" {
+		t.Error("a new run starts its numbering over, and the old run's batches are stale")
 	}
 }

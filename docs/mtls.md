@@ -17,6 +17,9 @@ mnemo hub --token ... --agent-listen :8444 \
   must equal the cluster in each request, and it must allow client auth, or the hub answers 403.
 - The main port (`--listen`) then refuses pushes, so mTLS can't be skipped. The token is still
   checked on the agent listener.
+- Without mTLS, anyone with the shared token can push as any cluster, and can also replace a
+  cluster's agent run (as a restarted agent does), making the real agent stop until it
+  restarts. mTLS limits both to the cluster named in the certificate.
 - TLS has to reach the hub intact: expose the port with a LoadBalancer or TLS passthrough,
   not an ingress that terminates TLS.
 

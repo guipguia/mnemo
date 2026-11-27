@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -133,6 +134,9 @@ func run(ctx context.Context, mode string, args []string) error {
 			if err != nil {
 				return err
 			}
+			if slices.Contains(gvrs, gvr) { // two watches of one resource would share its batch numbering
+				return fmt.Errorf("--resources lists %s twice", r)
+			}
 			gvrs = append(gvrs, gvr)
 		}
 		// No ~/.kube/config fallback: without --kubeconfig, only in-cluster config.
@@ -158,8 +162,8 @@ func run(ctx context.Context, mode string, args []string) error {
 			AuditAddr: *auditListen, AuditToken: *auditToken, AuditCert: *auditCert, AuditKey: *auditKey}
 		if st != nil {
 			ag.Push = func(ctx context.Context, b hub.Batch) error { return hub.Ingest(ctx, st, b) }
-			ag.Resume = func(ctx context.Context, cluster, uid string) (map[string]string, error) {
-				return hub.Resume(ctx, st, cluster, uid)
+			ag.Resume = func(ctx context.Context, cluster, uid, session string) (map[string]string, error) {
+				return hub.Resume(ctx, st, cluster, uid, session)
 			}
 		} else {
 			if *hubURL == "" || *token == "" {

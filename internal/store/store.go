@@ -83,6 +83,13 @@ CREATE TABLE IF NOT EXISTS webhook_cursors (
 	name    TEXT PRIMARY KEY,
 	last_id INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS streams (
+	cluster TEXT    NOT NULL,
+	stream  TEXT    NOT NULL, -- "": the cluster's current agent session
+	session TEXT    NOT NULL,
+	seq     INTEGER NOT NULL,
+	PRIMARY KEY (cluster, stream)
+);
 CREATE TABLE IF NOT EXISTS checkpoints (
 	cluster          TEXT NOT NULL,
 	resource         TEXT NOT NULL,
@@ -98,6 +105,9 @@ var (
 	ErrNotFound = errors.New("not found")
 	// ErrClusterConflict means a cluster name is already registered with a different UID.
 	ErrClusterConflict = errors.New("cluster name already registered with a different UID")
+	// ErrSuperseded means another agent run for the cluster has started since this one: its
+	// batches are refused, and it must stop (or restart, to take over again).
+	ErrSuperseded = errors.New("another agent for this cluster has started since this one; stopping")
 )
 
 type Type string
@@ -199,7 +209,7 @@ func (s *Store) Size(ctx context.Context) (int64, error) {
 // listed is true when the object came from a list rather than a watch event.
 // Record fills in c.ID, c.Type and c.Paths, then calls attribute (if non-nil) so the
 // caller can set authorship from the changed paths before the row is written.
-func (s *Store) Record(ctx context.Context, c *Change, listed bool, attribute func(*Change)) (bool, error) {
+func (w *Writer) Record(ctx context.Context, c *Change, listed bool, attribute func(*Change)) (bool, error) {
 	if c.Cluster == "" || c.Kind == "" || c.Name == "" || c.Time.IsZero() {
 		return false, errors.New("record: cluster, kind, name and time are required")
 	}
@@ -210,11 +220,8 @@ func (s *Store) Record(ctx context.Context, c *Change, listed bool, attribute fu
 		}
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback()
+	tx := w.tx
+	var err error
 
 	var prev []byte // nil if never seen or latest version is a deletion
 	var prevTS int64
@@ -267,19 +274,15 @@ func (s *Store) Record(ctx context.Context, c *Change, listed bool, attribute fu
 		c.Time.UnixNano(), string(c.Type), c.Author, c.Source, c.Drift, paths, object).Scan(&c.ID); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	return true, nil
 }
 
 // Reattribute calls f on every change in cluster to namespace/name written at resourceVersion
 // rv, or deleting the object with UID uid, then saves the Author, Source and Drift that f set.
 // Empty rv or uid match nothing. It reports how many changes it updated: none if the write
 // was never recorded (e.g. a status-only update).
-func (s *Store) Reattribute(ctx context.Context, cluster, namespace, name, rv, uid string, f func(*Change)) (int, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
+func (w *Writer) Reattribute(ctx context.Context, cluster, namespace, name, rv, uid string, f func(*Change)) (int, error) {
+	tx := w.tx
 	rows, err := tx.QueryContext(ctx, "SELECT "+cols+`, object FROM changes
 		WHERE cluster = ? AND namespace = ? AND name = ?
 		AND ((? != '' AND resource_version = ?) OR (? != '' AND uid = ? AND type = ?))`,
@@ -307,7 +310,7 @@ func (s *Store) Reattribute(ctx context.Context, cluster, namespace, name, rv, u
 			return 0, err
 		}
 	}
-	return len(found), tx.Commit()
+	return len(found), nil
 }
 
 // Access is what a caller may see: everything, or the union of Scopes. The zero value sees nothing.
@@ -514,9 +517,9 @@ func (s *Store) At(ctx context.Context, r Ref, t time.Time) (Change, error) {
 
 // Prune records a deletion for every live object of cluster/group/kind not in keep
 // (keyed "namespace/name"). Called after a relist to catch deletions missed while offline.
-func (s *Store) Prune(ctx context.Context, cluster, group, kind string, keep map[string]bool, t time.Time) (int, error) {
-	// Collect first: with one connection, Record can't run while rows are open.
-	rows, err := s.db.QueryContext(ctx, `SELECT namespace, name FROM changes c
+func (w *Writer) Prune(ctx context.Context, cluster, group, kind string, keep map[string]bool, t time.Time) (int, error) {
+	// Collect first: on one connection, Record can't run while rows are open.
+	rows, err := w.tx.QueryContext(ctx, `SELECT namespace, name FROM changes c
 		WHERE cluster = ? AND api_group = ? AND kind = ? AND type != ?
 		AND id = (SELECT MAX(id) FROM changes
 			WHERE cluster = c.cluster AND api_group = c.api_group AND kind = c.kind
@@ -540,7 +543,7 @@ func (s *Store) Prune(ctx context.Context, cluster, group, kind string, keep map
 		return 0, err
 	}
 	for _, r := range gone {
-		if _, err := s.Record(ctx, &Change{Ref: r, Time: t, Source: "unknown"}, true, nil); err != nil {
+		if _, err := w.Record(ctx, &Change{Ref: r, Time: t, Source: "unknown"}, true, nil); err != nil {
 			return 0, err
 		}
 	}
@@ -575,14 +578,10 @@ func (s *Store) Expire(ctx context.Context, before time.Time, maxVersions int) (
 // RegisterCluster records that an agent for cluster name (identified by uid) checked in.
 // It fails with ErrClusterConflict if another cluster already uses the name, so two
 // clusters can never mix their histories.
-func (s *Store) RegisterCluster(ctx context.Context, name, uid string) error {
-	tx, err := s.db.BeginTx(ctx, nil) // check and insert together: two hubs, one new name
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+func (w *Writer) RegisterCluster(ctx context.Context, name, uid string) error {
+	tx := w.tx // check and insert together: two hubs, one new name
 	var existing string
-	err = tx.QueryRowContext(ctx, "SELECT uid FROM clusters WHERE name = ?", name).Scan(&existing)
+	err := tx.QueryRowContext(ctx, "SELECT uid FROM clusters WHERE name = ?", name).Scan(&existing)
 	if err == nil && existing != uid {
 		return ErrClusterConflict
 	}
@@ -593,7 +592,7 @@ func (s *Store) RegisterCluster(ctx context.Context, name, uid string) error {
 		ON CONFLICT (name) DO UPDATE SET last_seen = excluded.last_seen`, name, uid, time.Now().UnixNano()); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 type Cluster struct {
@@ -640,8 +639,8 @@ func (s *Store) Checkpoints(ctx context.Context, cluster string) (map[string]str
 	return out, rows.Err()
 }
 
-func (s *Store) SetCheckpoint(ctx context.Context, cluster, resource, rv string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO checkpoints (cluster, resource, resource_version) VALUES (?, ?, ?)
+func (w *Writer) SetCheckpoint(ctx context.Context, cluster, resource, rv string) error {
+	_, err := w.tx.ExecContext(ctx, `INSERT INTO checkpoints (cluster, resource, resource_version) VALUES (?, ?, ?)
 		ON CONFLICT (cluster, resource) DO UPDATE SET resource_version = excluded.resource_version`, cluster, resource, rv)
 	return err
 }

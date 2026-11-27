@@ -23,12 +23,8 @@ type Deploy struct {
 
 // RecordDeploys stores deploys of cluster's apps. A deploy with a Key replaces the one with the
 // same Key; without one, it is added only if the app's latest deploy has another revision.
-func (s *Store) RecordDeploys(ctx context.Context, cluster string, ds []Deploy) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+func (w *Writer) RecordDeploys(ctx context.Context, cluster string, ds []Deploy) error {
+	tx := w.tx
 	for _, d := range ds {
 		if d.Key == "" {
 			var latest string
@@ -55,7 +51,7 @@ func (s *Store) RecordDeploys(ctx context.Context, cluster string, ds []Deploy) 
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // deploySlack absorbs the 1s precision of managedFields times and agent processing delays.

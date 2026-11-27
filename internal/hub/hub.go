@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -18,11 +19,15 @@ import (
 	"github.com/guipguia/mnemo/internal/store"
 )
 
-// Batch is what an agent pushes. Items are stored first, then relists are pruned,
-// then checkpoints advance, so a crash mid-batch only causes a harmless resend.
+// Batch is what an agent pushes. The hub stores all of it in one transaction, or none of it.
+// Session, Stream and Seq order a stream's batches: the hub drops one that comes after a
+// later one, such as a slow original that finishes after its own retry (see store.Fresh).
 type Batch struct {
 	Cluster     string            `json:"cluster"`
-	ClusterUID  string            `json:"clusterUID"` // kube-system namespace UID
+	ClusterUID  string            `json:"clusterUID"`        // kube-system namespace UID
+	Session     string            `json:"session,omitempty"` // this agent run, from Resume
+	Stream      string            `json:"stream,omitempty"`  // e.g. a watched resource; empty: unordered
+	Seq         int64             `json:"seq,omitempty"`     // increases within the stream
 	Items       []Item            `json:"items,omitempty"`
 	Synced      []Synced          `json:"synced,omitempty"`
 	Checkpoints map[string]string `json:"checkpoints,omitempty"` // "group/version/resource" -> resourceVersion
@@ -60,11 +65,21 @@ type Synced struct {
 
 // Resume registers the cluster and returns its checkpoints. Registering first means an
 // agent can never resume from checkpoints that belong to another cluster with the same name.
-func Resume(ctx context.Context, s *store.Store, cluster, uid string) (map[string]string, error) {
+// session, if set, becomes the cluster's current agent run: batches from earlier runs are
+// dropped from now on, so an old agent pod still shutting down can't write over a new one.
+func Resume(ctx context.Context, s *store.Store, cluster, uid, session string) (map[string]string, error) {
 	if cluster == "" || uid == "" {
 		return nil, errors.New("cluster and uid are required")
 	}
-	if err := s.RegisterCluster(ctx, cluster, uid); err != nil {
+	if err := s.Write(ctx, func(w *store.Writer) error {
+		if err := w.RegisterCluster(ctx, cluster, uid); err != nil {
+			return err
+		}
+		if session != "" {
+			return w.SetSession(ctx, cluster, session)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	return s.Checkpoints(ctx, cluster)
@@ -85,8 +100,18 @@ func ingest(ctx context.Context, s *store.Store, b Batch) error {
 	if b.Cluster == "" || b.ClusterUID == "" {
 		return errors.New("cluster and clusterUID are required")
 	}
+	return s.Write(ctx, func(w *store.Writer) error { return ingestTx(ctx, w, b) })
+}
+
+func ingestTx(ctx context.Context, s *store.Writer, b Batch) error {
 	if err := s.RegisterCluster(ctx, b.Cluster, b.ClusterUID); err != nil {
 		return err
+	}
+	if fresh, err := s.Fresh(ctx, b.Cluster, b.Session, b.Stream, b.Seq); err != nil || !fresh {
+		if err == nil {
+			slog.Info("dropped a stale batch", "cluster", b.Cluster, "stream", b.Stream, "seq", b.Seq)
+		}
+		return err // stale: already stored, or superseded; the agent moves on
 	}
 	for _, it := range b.Items {
 		it.Cluster = b.Cluster
@@ -275,7 +300,7 @@ func agentRoutes(mux *http.ServeMux, s *store.Store, token string, clusterCert b
 			forbidden(w, q.Get("cluster"))
 			return
 		}
-		reply(w)(Resume(r.Context(), s, q.Get("cluster"), q.Get("uid")))
+		reply(w)(Resume(r.Context(), s, q.Get("cluster"), q.Get("uid"), q.Get("session")))
 	}))
 }
 
@@ -297,6 +322,8 @@ func reply(w http.ResponseWriter) func(any, error) {
 		switch {
 		case errors.Is(err, store.ErrClusterConflict):
 			http.Error(w, err.Error(), http.StatusConflict)
+		case errors.Is(err, store.ErrSuperseded):
+			http.Error(w, err.Error(), http.StatusGone)
 		case errors.Is(err, store.ErrNotFound):
 			http.Error(w, err.Error(), http.StatusNotFound)
 		case err != nil:

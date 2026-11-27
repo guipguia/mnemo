@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/guipguia/mnemo/internal/store"
 )
 
 // Client is how a remote agent talks to the hub.
@@ -33,9 +35,9 @@ func (c *Client) Push(ctx context.Context, b Batch) error {
 	return c.do(ctx, "POST", "/api/v1/ingest", bytes.NewReader(body), nil)
 }
 
-func (c *Client) Resume(ctx context.Context, cluster, uid string) (map[string]string, error) {
+func (c *Client) Resume(ctx context.Context, cluster, uid, session string) (map[string]string, error) {
 	var cp map[string]string
-	q := url.Values{"cluster": {cluster}, "uid": {uid}}
+	q := url.Values{"cluster": {cluster}, "uid": {uid}, "session": {session}}
 	return cp, c.do(ctx, "GET", "/api/v1/checkpoints?"+q.Encode(), nil, &cp)
 }
 
@@ -51,6 +53,9 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, ou
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusGone {
+		return store.ErrSuperseded
+	}
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return fmt.Errorf("hub %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(msg))

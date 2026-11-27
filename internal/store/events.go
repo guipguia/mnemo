@@ -22,12 +22,8 @@ type Event struct {
 }
 
 // RecordEvents stores events, or updates them as the API server bumps their count.
-func (s *Store) RecordEvents(ctx context.Context, cluster string, evs []Event) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+func (w *Writer) RecordEvents(ctx context.Context, cluster string, evs []Event) error {
+	tx := w.tx
 	for _, e := range evs {
 		// Messages can carry container output; PostgreSQL text can't hold NUL.
 		e.Message, e.Reason, e.Source = noNUL(e.Message), noNUL(e.Reason), noNUL(e.Source)
@@ -35,13 +31,13 @@ func (s *Store) RecordEvents(ctx context.Context, cluster string, evs []Event) e
 			(cluster, uid, api_group, kind, namespace, name, type, reason, message, source, count, first_ts, last_ts)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (cluster, uid) DO UPDATE SET message = excluded.message, count = excluded.count,
-				last_ts = `+s.db.greatest()+`(events.last_ts, excluded.last_ts)`,
+				last_ts = `+greatest(tx.pg)+`(events.last_ts, excluded.last_ts)`,
 			cluster, e.UID, e.Group, e.Kind, e.Namespace, e.Name, e.Type, e.Reason, e.Message, e.Source,
 			e.Count, e.FirstTime.UnixNano(), e.LastTime.UnixNano()); err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func noNUL(s string) string { return strings.ReplaceAll(s, "\x00", "") }

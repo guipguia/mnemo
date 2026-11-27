@@ -75,8 +75,8 @@ func newHarness(t *testing.T) *harness {
 	h.agent = &Agent{
 		Client: client, Cluster: "test", Resources: []schema.GroupVersionResource{configmaps},
 		Push: func(ctx context.Context, b hub.Batch) error { return hub.Ingest(ctx, st, b) },
-		Resume: func(ctx context.Context, c, uid string) (map[string]string, error) {
-			return hub.Resume(ctx, st, c, uid)
+		Resume: func(ctx context.Context, c, uid, session string) (map[string]string, error) {
+			return hub.Resume(ctx, st, c, uid, session)
 		},
 	}
 	return h
@@ -236,7 +236,7 @@ func TestWatchLoop(t *testing.T) {
 func TestResumesFromHubCheckpoint(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	if _, err := hub.Resume(ctx, h.st, "test", "kube-system-uid"); err != nil {
+	if _, err := hub.Resume(ctx, h.st, "test", "kube-system-uid", ""); err != nil {
 		t.Fatal(err)
 	}
 	h.st.SetCheckpoint(ctx, "test", "v1/configmaps", "500")
@@ -252,11 +252,11 @@ func TestResumesFromHubCheckpoint(t *testing.T) {
 
 func TestRefusesClusterNameOfAnotherCluster(t *testing.T) {
 	h := newHarness(t)
-	if _, err := hub.Resume(context.Background(), h.st, "test", "some-other-cluster-uid"); err != nil {
+	if _, err := hub.Resume(context.Background(), h.st, "test", "some-other-cluster-uid", ""); err != nil {
 		t.Fatal(err)
 	}
-	h.agent.Resume = func(ctx context.Context, c, uid string) (map[string]string, error) {
-		return hub.Resume(ctx, h.st, c, uid)
+	h.agent.Resume = func(ctx context.Context, c, uid, session string) (map[string]string, error) {
+		return hub.Resume(ctx, h.st, c, uid, session)
 	}
 	stop := h.run()
 	defer stop()
@@ -314,7 +314,7 @@ func TestHeartbeat(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	h.st.SetCheckpoint(ctx, "test", "v1/configmaps", "500") // resume: no list needed
-	hub.Resume(ctx, h.st, "test", "kube-system-uid")
+	hub.Resume(ctx, h.st, "test", "kube-system-uid", "")
 	stop := h.run()
 	defer stop()
 	h.nextWatch("500")
@@ -329,4 +329,27 @@ func TestHeartbeat(t *testing.T) {
 			t.Fatal("no heartbeat")
 		}
 	}
+}
+
+// Another agent run for the cluster took over: this one's next push is refused, and it stops
+// with that reason rather than carrying on and silently writing nothing.
+func TestStopsWhenSuperseded(t *testing.T) {
+	h := newHarness(t)
+	h.lists <- list("100", cm("a", "90", "kubectl-create", map[string]any{"K": "1"}))
+	done := make(chan error, 1)
+	go func() { done <- h.agent.Run(t.Context()) }()
+	w := h.nextWatch("100")
+	if _, err := hub.Resume(t.Context(), h.st, "test", "kube-system-uid", "a-newer-run"); err != nil {
+		t.Fatal(err)
+	}
+	w.Modify(cm("a", "101", "kubectl-patch", map[string]any{"K": "2"}))
+	select {
+	case err := <-done:
+		if !errors.Is(err, store.ErrSuperseded) {
+			t.Fatalf("Run = %v, want ErrSuperseded", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("agent kept running after being superseded")
+	}
+	h.wantHistory("a", "baseline:kubectl-create") // the refused change isn't stored
 }

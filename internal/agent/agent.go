@@ -3,6 +3,7 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -62,12 +63,17 @@ type Agent struct {
 	Resources []schema.GroupVersionResource
 	// Push and Resume reach the hub: over HTTP (hub.Client) or in-process (mnemo all).
 	Push   func(context.Context, hub.Batch) error
-	Resume func(ctx context.Context, cluster, uid string) (map[string]string, error)
+	Resume func(ctx context.Context, cluster, uid, session string) (map[string]string, error)
 	// AuditAddr, if set, is where the agent receives the API server's audit webhook over TLS
 	// (AuditCert, AuditKey). The webhook must send AuditToken as a bearer token.
 	AuditAddr, AuditToken, AuditCert, AuditKey string
 
-	uid string
+	uid     string
+	session string // this run: the hub drops batches from earlier runs
+	stop    context.CancelCauseFunc
+
+	mu  sync.Mutex
+	seq map[string]int64 // last batch number per stream (watched resource)
 }
 
 // Run watches every resource until ctx is done.
@@ -78,21 +84,28 @@ func (a *Agent) Run(ctx context.Context) error {
 		return fmt.Errorf("read cluster identity (kube-system UID): %w", err)
 	}
 	a.uid = string(ns.GetUID())
+	a.session = rand.Text()
+	ctx, a.stop = context.WithCancelCause(ctx)
+	defer a.stop(nil)
+
+	// Listen before taking over the cluster at Resume: a pod that can't serve shouldn't
+	// replace a working agent.
+	var audit net.Listener
+	if a.AuditAddr != "" {
+		if audit, err = net.Listen("tcp", a.AuditAddr); err != nil {
+			return fmt.Errorf("audit webhook: %w", err)
+		}
+	}
 
 	var cps map[string]string
 	if err := retry(ctx, "resume", func() (err error) {
-		cps, err = a.Resume(ctx, a.Cluster, a.uid)
+		cps, err = a.Resume(ctx, a.Cluster, a.uid, a.session)
 		return err
 	}); err != nil {
 		return err
 	}
-	if a.AuditAddr != "" {
-		// Listen only now: forwarded audit events need the cluster UID.
-		l, err := net.Listen("tcp", a.AuditAddr)
-		if err != nil {
-			return fmt.Errorf("audit webhook: %w", err)
-		}
-		go a.serveAudit(ctx, l)
+	if audit != nil {
+		go a.serveAudit(ctx, audit) // only now: forwarded audit events need the session's UID
 	}
 	slog.Info("agent started", "cluster", a.Cluster, "uid", a.uid, "resources", len(a.Resources), "audit", a.AuditAddr)
 
@@ -102,7 +115,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	wg.Go(func() { a.heartbeat(ctx) })
 	wg.Wait()
-	return ctx.Err()
+	return context.Cause(ctx)
 }
 
 // watch resumes from rv, relisting whenever there is no usable resume point.
@@ -175,7 +188,7 @@ func (a *Agent) consume(ctx context.Context, gvr schema.GroupVersionResource, w 
 			}
 		}
 		// ponytail: one push per event; batch when the hub becomes the bottleneck.
-		if err := a.push(ctx, b); err != nil {
+		if err := a.push(ctx, key(gvr), b); err != nil {
 			return rv, err
 		}
 		rv = u.GetResourceVersion()
@@ -198,12 +211,12 @@ func (a *Agent) relist(ctx context.Context, gvr schema.GroupVersionResource) (st
 			evs = append(evs, toEvent(&list.Items[i]))
 		}
 		for len(evs) > 500 {
-			if err := a.push(ctx, hub.Batch{Events: evs[:500]}); err != nil {
+			if err := a.push(ctx, key(gvr), hub.Batch{Events: evs[:500]}); err != nil {
 				return "", err
 			}
 			evs = evs[500:]
 		}
-		return rv, a.push(ctx, hub.Batch{Events: evs, Checkpoints: map[string]string{key(gvr): rv}})
+		return rv, a.push(ctx, key(gvr), hub.Batch{Events: evs, Checkpoints: map[string]string{key(gvr): rv}})
 	}
 	now := time.Now()
 	items := make([]hub.Item, 0, len(list.Items))
@@ -219,12 +232,12 @@ func (a *Agent) relist(ctx context.Context, gvr schema.GroupVersionResource) (st
 		keep = append(keep, it.Namespace+"/"+it.Name)
 	}
 	for len(items) > 500 {
-		if err := a.push(ctx, hub.Batch{Items: items[:500]}); err != nil {
+		if err := a.push(ctx, key(gvr), hub.Batch{Items: items[:500]}); err != nil {
 			return "", err
 		}
 		items = items[500:]
 	}
-	err = a.push(ctx, hub.Batch{
+	err = a.push(ctx, key(gvr), hub.Batch{
 		Items:       items,
 		Deploys:     deploys,
 		Synced:      []hub.Synced{{Group: gvr.Group, Kind: strings.TrimSuffix(list.GetKind(), "List"), Keep: keep, Time: now}},
@@ -251,15 +264,27 @@ var heartbeatEvery = time.Minute
 
 // push retries until the hub accepts the batch: the watch simply waits, and if the
 // hub is down long enough for the resume point to expire, the next relist catches up.
-func (a *Agent) push(ctx context.Context, b hub.Batch) error {
-	b.Cluster, b.ClusterUID = a.Cluster, a.uid
-	return retry(ctx, "push", func() error { return a.Push(ctx, b) })
+// The batch is numbered in stream once, before any retry, so the hub can drop a stale copy.
+func (a *Agent) push(ctx context.Context, stream string, b hub.Batch) error {
+	a.mu.Lock()
+	if a.seq == nil {
+		a.seq = map[string]int64{}
+	}
+	a.seq[stream]++
+	b.Seq = a.seq[stream]
+	a.mu.Unlock()
+	b.Cluster, b.ClusterUID, b.Session, b.Stream = a.Cluster, a.uid, a.session, stream
+	err := retry(ctx, "push", func() error { return a.Push(ctx, b) })
+	if errors.Is(err, store.ErrSuperseded) && a.stop != nil {
+		a.stop(err) // every watch ends, and Run returns err
+	}
+	return err
 }
 
 func retry(ctx context.Context, what string, f func() error) error {
 	for backoff := time.Second; ; backoff = min(2*backoff, time.Minute) {
 		err := f()
-		if err == nil || ctx.Err() != nil {
+		if err == nil || ctx.Err() != nil || errors.Is(err, store.ErrSuperseded) { // retrying can't fix that
 			return err
 		}
 		slog.Warn(what+" failed, retrying", "err", err, "in", backoff)

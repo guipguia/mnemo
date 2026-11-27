@@ -106,13 +106,13 @@ func TestAgentListener(t *testing.T) {
 	if err := push(prod, "prod"); err != nil {
 		t.Errorf("prod pushing prod: %v", err)
 	}
-	if _, err := prod.Resume(t.Context(), "prod", "uid-prod"); err != nil {
+	if _, err := prod.Resume(t.Context(), "prod", "uid-prod", ""); err != nil {
 		t.Errorf("prod resuming prod: %v", err)
 	}
 	if err := push(prod, "staging"); err == nil || !strings.Contains(err.Error(), "403") {
 		t.Errorf("prod pushing staging: %v, want 403", err)
 	}
-	if _, err := prod.Resume(t.Context(), "staging", "uid-staging"); err == nil || !strings.Contains(err.Error(), "403") {
+	if _, err := prod.Resume(t.Context(), "staging", "uid-staging", ""); err == nil || !strings.Contains(err.Error(), "403") {
 		t.Errorf("prod resuming staging: %v, want 403", err)
 	}
 	dc, dk := ca.issue("dns", "agent", []string{"staging"}, false, false) // the name can be a DNS SAN
