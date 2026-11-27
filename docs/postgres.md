@@ -16,13 +16,34 @@ Chart: put the URL in a Secret under the key `url` and set `hub.database.existin
 PVC is created, and `hub.backup` (Litestream, for SQLite) is refused: back up PostgreSQL the
 way you back up your other databases.
 
-## One hub at a time
+## Several hubs
 
-Run a single hub, as with SQLite; the chart does (`replicas: 1`, `Recreate`). Webhook delivery
-and retention run inside the hub, and two hubs would both do them. Running several hubs
-against one database (HA) is on the [roadmap](../ROADMAP.md).
+On PostgreSQL you can run several hubs on one database, for availability (chart:
+`hub.replicas`, in mode `hub`). Put them behind one Service; any hub takes agent pushes and
+serves the UI, API and MCP.
 
-The hub also uses one database connection, so writes are serialized exactly as with SQLite.
+- **Writes** take a database-wide lock, so hubs write one at a time, as a single hub does. This
+  is what keeps an object's versions in order when a retried push lands on two hubs, and
+  keeps change IDs committing in order, so webhook delivery never skips one. Add hubs for
+  availability, not for write throughput.
+- **Webhooks and retention** run on one hub, the leader, which holds a PostgreSQL advisory
+  lock on a connection of its own. If it dies or loses the database, another hub takes over
+  within about 30 seconds (the lock's session asks the server to drop it once the hub goes
+  silent) and resumes webhook delivery from the stored position. Receivers may see up to a
+  batch (100 changes) again, plus anything a cut-off old leader sends before it notices:
+  delivery is at-least-once, and receivers dedupe on `id`.
+- **Logins** (`--auth oidc`) are signed cookies: give every hub the same
+  `MNEMO_SESSION_KEY` (the chart does), or a login on one hub fails on another.
+- `mnemo_ingest_failures_total` is per hub; the other metrics read the shared database.
+
+Each hub uses one connection for its work and one for the leader lock. The leader lock is a
+session advisory lock: connect hubs to PostgreSQL directly or through session pooling, not a
+transaction-pooling PgBouncer.
+
+**Upgrading to the release that added several hubs:** hubs from before it don't take the
+write lock or elect a leader, so they must never run beside newer ones. With one replica the
+chart replaces the pod (`Recreate`), which is safe; raise `hub.replicas` only after the
+upgrade is done.
 
 ## Moving from SQLite
 

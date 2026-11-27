@@ -132,7 +132,10 @@ type Change struct {
 	Object          json.RawMessage `json:"object,omitempty"` // normalized object; nil when Deleted or not loaded
 }
 
-type Store struct{ db db }
+type Store struct {
+	db     db
+	lockDB *sql.DB // PostgreSQL: the leader lock's own connection
+}
 
 // IsPostgres reports whether dsn names a PostgreSQL database rather than a SQLite file.
 func IsPostgres(dsn string) bool {
@@ -152,17 +155,30 @@ func Open(dsn string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	// ponytail: one connection serializes reads and writes, which Record and friends rely on
-	// (read the latest version, then write the next). Fine for one hub; HA needs row locks.
+	// ponytail: one connection per hub serializes its reads and writes; across hubs on
+	// PostgreSQL, BeginTx's write lock does. A pool would need per-object locks first.
 	d.SetMaxOpenConns(1)
 	if _, err := d.Exec(ddl); err != nil {
 		d.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
-	return &Store{d}, nil
+	st := &Store{db: d}
+	if d.pg {
+		if st.lockDB, err = sql.Open("pgx", dsn); err != nil {
+			d.Close()
+			return nil, err
+		}
+		st.lockDB.SetMaxOpenConns(1)
+	}
+	return st, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.lockDB != nil {
+		s.lockDB.Close()
+	}
+	return s.db.Close()
+}
 
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
@@ -559,17 +575,24 @@ func (s *Store) Expire(ctx context.Context, before time.Time, maxVersions int) (
 // It fails with ErrClusterConflict if another cluster already uses the name, so two
 // clusters can never mix their histories.
 func (s *Store) RegisterCluster(ctx context.Context, name, uid string) error {
+	tx, err := s.db.BeginTx(ctx, nil) // check and insert together: two hubs, one new name
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	var existing string
-	err := s.db.QueryRowContext(ctx, "SELECT uid FROM clusters WHERE name = ?", name).Scan(&existing)
+	err = tx.QueryRowContext(ctx, "SELECT uid FROM clusters WHERE name = ?", name).Scan(&existing)
 	if err == nil && existing != uid {
 		return ErrClusterConflict
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO clusters (name, uid, last_seen) VALUES (?, ?, ?)
-		ON CONFLICT (name) DO UPDATE SET last_seen = excluded.last_seen`, name, uid, time.Now().UnixNano())
-	return err
+	if _, err = tx.ExecContext(ctx, `INSERT INTO clusters (name, uid, last_seen) VALUES (?, ?, ?)
+		ON CONFLICT (name) DO UPDATE SET last_seen = excluded.last_seen`, name, uid, time.Now().UnixNano()); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 type Cluster struct {

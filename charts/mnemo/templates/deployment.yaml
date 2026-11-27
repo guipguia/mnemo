@@ -12,8 +12,14 @@ metadata:
   name: {{ include "mnemo.fullname" . }}
   labels: {{- include "mnemo.labels" . | nindent 4 }}
 spec:
-  replicas: 1  # one hub: SQLite has one writer, and webhooks and retention run in the hub
-  strategy: {type: Recreate}  # the ReadWriteOnce volume can't attach to two pods
+  {{- if gt (int .Values.hub.replicas) 1 }}
+  replicas: {{ .Values.hub.replicas }}  # PostgreSQL: hubs share it, and elect a leader for webhooks and retention
+  {{- else }}
+  replicas: 1
+  # One hub at a time: SQLite's ReadWriteOnce volume can't attach to two pods, and a hub from
+  # before multi-hub support must never run beside a newer one.
+  strategy: {type: Recreate, rollingUpdate: null}  # null: clears what a multi-replica release left
+  {{- end }}
   selector:
     matchLabels: {{- include "mnemo.selector" . | nindent 6 }}
   template:
@@ -25,6 +31,16 @@ spec:
         {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
     spec:
       serviceAccountName: {{ include "mnemo.fullname" . }}
+      {{- if gt (int .Values.hub.replicas) 1 }}
+      affinity:
+        podAntiAffinity:  # spread hubs over nodes, when there's room
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels: {{- include "mnemo.selector" . | nindent 20 }}
+      {{- end }}
       automountServiceAccountToken: {{ if $agent }}true{{ else }}false{{ end }}
       securityContext:
         runAsNonRoot: true

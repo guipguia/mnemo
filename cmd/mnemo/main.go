@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -218,12 +219,17 @@ func run(ctx context.Context, mode string, args []string) error {
 			go func() { errc <- msrv.ListenAndServe() }()
 			go func() { <-ctx.Done(); msrv.Close() }()
 		}
-		if hooks != nil {
-			go webhook.Run(ctx, st, hooks)
-		}
-		if *retentionDays > 0 || *retentionVersions > 0 || *eventRetentionDays > 0 {
-			go expire(ctx, st, *retentionDays, *retentionVersions, *eventRetentionDays)
-		}
+		// Once per database, not per hub: with several hubs on PostgreSQL, only the leader.
+		go st.Leader(ctx, func(ctx context.Context) {
+			var wg sync.WaitGroup
+			if hooks != nil {
+				wg.Go(func() { webhook.Run(ctx, st, hooks) })
+			}
+			if *retentionDays > 0 || *retentionVersions > 0 || *eventRetentionDays > 0 {
+				wg.Go(func() { expire(ctx, st, *retentionDays, *retentionVersions, *eventRetentionDays) })
+			}
+			wg.Wait()
+		})
 		if au.Mode() == "none" && !loopback(*listen) {
 			slog.Warn("--auth none on a non-loopback address: anyone who can reach the hub sees all history")
 		}

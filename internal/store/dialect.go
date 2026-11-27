@@ -33,13 +33,31 @@ func (d db) QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row
 	return d.DB.QueryRowContext(ctx, rebind(d.pg, q), args...)
 }
 
+// BeginTx starts a transaction. On PostgreSQL it first takes a database-wide write lock, held
+// until commit, so several hubs on one database write one at a time, as one hub does: no two
+// can both read an object's latest version and append the next, and change IDs commit in
+// order, so a webhook cursor never passes an ID that commits later.
+// ponytail: one global write lock; per-cluster locks and gap-tolerant cursors if write
+// throughput across hubs ever matters.
 func (d db) BeginTx(ctx context.Context, opts *sql.TxOptions) (*tx, error) {
 	t, err := d.DB.BeginTx(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
+	if d.pg {
+		if _, err := t.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1)", writeLock); err != nil {
+			t.Rollback()
+			return nil, err
+		}
+	}
 	return &tx{t, d.pg}, nil
 }
+
+// Advisory lock keys, arbitrary but fixed: every hub must agree on them.
+const (
+	writeLock  int64 = 0x6d6e656d6f01 // "mnemo" 1
+	leaderLock int64 = 0x6d6e656d6f02
+)
 
 func (t *tx) ExecContext(ctx context.Context, q string, args ...any) (sql.Result, error) {
 	return t.Tx.ExecContext(ctx, rebind(t.pg, q), args...)

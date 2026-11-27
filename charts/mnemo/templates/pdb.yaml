@@ -1,0 +1,11 @@
+{{- if gt (int .Values.hub.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mnemo.fullname" . }}
+  labels: {{- include "mnemo.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1  # node drains take hubs one at a time
+  selector:
+    matchLabels: {{- include "mnemo.selector" . | nindent 6 }}
+{{- end }}

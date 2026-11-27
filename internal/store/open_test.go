@@ -14,19 +14,22 @@ import (
 // openTest opens an empty store: SQLite, or with $MNEMO_TEST_POSTGRES (a postgres:// URL) a
 // fresh schema in that database. These tests are the conformance suite every backend passes;
 // CI runs them against both.
-func openTest(t *testing.T) (*Store, error) {
+func openTest(t *testing.T) (*Store, error) { return Open(testDSN(t)) }
+
+// testDSN is a fresh database: a SQLite path, or a new schema in $MNEMO_TEST_POSTGRES.
+func testDSN(t *testing.T) string {
 	dsn := os.Getenv("MNEMO_TEST_POSTGRES")
 	if dsn == "" {
-		return Open(filepath.Join(t.TempDir(), "mnemo.db"))
+		return filepath.Join(t.TempDir(), "mnemo.db")
 	}
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return nil, err
+		t.Fatal(err)
 	}
 	name := "t_" + strings.ToLower(rand.Text())
 	if _, err := admin.Exec("CREATE SCHEMA " + name); err != nil {
 		admin.Close()
-		return nil, err
+		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		admin.Exec("DROP SCHEMA " + name + " CASCADE")
@@ -36,7 +39,7 @@ func openTest(t *testing.T) (*Store, error) {
 	if strings.Contains(dsn, "?") {
 		sep = "&"
 	}
-	return Open(fmt.Sprintf("%s%ssearch_path=%s", dsn, sep, name))
+	return fmt.Sprintf("%s%ssearch_path=%s", dsn, sep, name)
 }
 
 // The rest of the API, which other packages otherwise test only on SQLite.
