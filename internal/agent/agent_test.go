@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"sync/atomic"
@@ -139,7 +140,7 @@ func (h *harness) checkpoint(want string) {
 
 // history returns "type:author" per version of a ConfigMap, newest first.
 func (h *harness) history(name string) []string {
-	cs, _ := h.st.History(context.Background(), store.Ref{Cluster: "test", Kind: "ConfigMap", Namespace: "ns", Name: name}, 0)
+	cs, _ := h.st.History(context.Background(), store.Ref{Cluster: "test", Kind: "ConfigMap", Namespace: "ns", Name: name}, 1000)
 	var out []string
 	for _, c := range cs {
 		out = append(out, string(c.Type)+":"+c.Author)
@@ -393,4 +394,32 @@ func TestRelistPages(t *testing.T) {
 	h.wantHistory("a", "baseline:kubectl-create") // in the snapshot: never deleted
 	h.wantHistory("gone", "deleted:", "baseline:kubectl-create")
 	h.checkpoint("210")
+}
+
+// A burst of watch events goes to the hub in a few batches, in order, and the checkpoint
+// ends at the last event.
+func TestWatchBatches(t *testing.T) {
+	h := newHarness(t)
+	var pushes atomic.Int32
+	ingest := h.agent.Push
+	h.agent.Push = func(ctx context.Context, b hub.Batch) error {
+		pushes.Add(1)
+		return ingest(ctx, b)
+	}
+	h.lists <- list("100", cm("a", "90", "kubectl-create", map[string]any{"K": "0"}))
+	stop := h.run()
+	defer stop()
+	w := h.nextWatch("100")
+	h.wantHistory("a", "baseline:kubectl-create")
+	before := pushes.Load()
+	want := []string{"baseline:kubectl-create"}
+	for i := 1; i <= 250; i++ {
+		w.Modify(cm("a", fmt.Sprint(100+i), "kubectl-patch", map[string]any{"K": fmt.Sprint(i)}))
+		want = append([]string{"modified:kubectl-patch"}, want...)
+	}
+	h.wantHistory("a", want...)
+	h.checkpoint("350")
+	if n := pushes.Load() - before; n > 4 {
+		t.Errorf("250 events took %d pushes, want batches (at most 4)", n)
+	}
 }
