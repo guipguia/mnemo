@@ -10,7 +10,7 @@ Reproduce with the commands below; numbers on your hardware will differ.
 | Path | SQLite | PostgreSQL |
 |---|---|---|
 | Store one modified version (diff, attribution, own transaction) | ~7,000 versions/s | ~500 versions/s |
-| End to end: agent batch of 100 over HTTP, JSON, managedFields attribution | ~7,800 objects/s | ~2,800 objects/s |
+| End to end: agent batch of 100 over HTTP, JSON, managedFields attribution | ~7,800 objects/s | ~2,500 objects/s |
 
 Storing one version alone is its own transaction, so PostgreSQL's rate there is set by its
 commit latency (here ~2.5 ms per commit, in a container); a server with faster commits goes
@@ -19,8 +19,7 @@ by the round trips each version makes (reading the previous version, writing the
 Both rates hold as an object's history grows: the previous version is read from the index,
 not found by sorting the object's versions (which made ingest slow down as history grew,
 to ~1,800 and ~900 objects/s at 800 versions per object, before that was fixed). For scale:
-a busy cluster produces tens of changes per second, and an initial sync of 10,000 objects
-takes a few seconds on either backend.
+a busy cluster produces tens of changes per second.
 
 The whole test process (hub and client) had under 4 MB of Go heap in use after the end-to-end run.
 
@@ -81,7 +80,7 @@ local hub on SQLite. The objects are ConfigMaps of ~1.2 KB, 16 keys each.
   object's name until the end, about 50 bytes each: before paging, the same initial sync
   peaked at 247 MB.
 - Pages are pushed at the hub's pace. If a relist outlasts the API server's snapshot (etcd
-  compacts every 5 minutes by default; at PostgreSQL's ~2,800 objects/s that is several
+  compacts every 5 minutes by default; at PostgreSQL's ~2,500 objects/s that is several
   hundred thousand objects in one resource, or a hub outage mid-relist), the agent reads
   every page again first, holding them converted, and pushes them after. That holds about
   2 KB per object for these ConfigMaps (more for larger objects): around 400 MB at 200,000,

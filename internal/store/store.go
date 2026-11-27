@@ -219,6 +219,7 @@ func (s *Store) Size(ctx context.Context) (int64, error) {
 // latestQuery reads an object's newest version. By ts, which the changes_object index
 // holds, so it reads one index entry; Record never lets a version's ts go below the one
 // before, so newest by ts is newest by id. ORDER BY id alone sorted every version.
+// Current, Prune and Expire also rely on that: nothing may set ts out of id order.
 const latestQuery = `SELECT object, ts FROM changes
 	WHERE cluster = ? AND api_group = ? AND kind = ? AND namespace = ? AND name = ?
 	ORDER BY ts DESC, id DESC LIMIT 1`
