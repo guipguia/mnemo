@@ -346,3 +346,41 @@ func TestCurrent(t *testing.T) {
 		t.Errorf("Current = %v, want %v", objs, want)
 	}
 }
+
+func TestHeldAudits(t *testing.T) {
+	ctx := context.Background()
+	s, err := openTest(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	err = s.Write(ctx, func(w *Writer) error {
+		if ok, err := w.HasHeldAudits(ctx, "prod"); err != nil || ok {
+			t.Errorf("HasHeldAudits before any = %v, %v", ok, err)
+		}
+		for _, a := range []HeldAudit{
+			{Namespace: "shop", Name: "cfg", ResourceVersion: "20", User: "carol"},
+			{Namespace: "shop", Name: "cfg", UID: "u1", User: "dave"},
+		} {
+			if err := w.HoldAudit(ctx, "prod", a); err != nil {
+				return err
+			}
+		}
+		mod := &Change{Ref: Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: "shop", Name: "cfg"}, ResourceVersion: "20", UID: "u1", Type: Modified}
+		got, err := w.TakeHeldAudits(ctx, mod)
+		if err != nil || len(got) != 1 || got[0].User != "carol" {
+			t.Errorf("modification: %+v, %v; want carol's", got, err)
+		}
+		if got, _ := w.TakeHeldAudits(ctx, mod); len(got) != 0 {
+			t.Errorf("taken twice: %+v", got)
+		}
+		del := &Change{Ref: mod.Ref, ResourceVersion: "21", UID: "u1", Type: Deleted}
+		if got, err := w.TakeHeldAudits(ctx, del); err != nil || len(got) != 1 || got[0].User != "dave" {
+			t.Errorf("deletion: %+v, %v; want dave's", got, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

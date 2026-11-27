@@ -90,6 +90,17 @@ CREATE TABLE IF NOT EXISTS streams (
 	seq     INTEGER NOT NULL,
 	PRIMARY KEY (cluster, stream)
 );
+CREATE TABLE IF NOT EXISTS held_audits ( -- audit events that arrived before their change
+	cluster          TEXT    NOT NULL,
+	namespace        TEXT    NOT NULL,
+	name             TEXT    NOT NULL,
+	resource_version TEXT    NOT NULL,
+	uid              TEXT    NOT NULL,
+	author           TEXT    NOT NULL,
+	user_agent       TEXT    NOT NULL,
+	ts               INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS held_audits_object ON held_audits (cluster, namespace, name);
 CREATE TABLE IF NOT EXISTS checkpoints (
 	cluster          TEXT NOT NULL,
 	resource         TEXT NOT NULL,

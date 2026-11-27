@@ -81,6 +81,68 @@ func (w *Writer) Stored(ctx context.Context, r Ref, rv string, t time.Time) (boo
 	return err == nil, err
 }
 
+// HeldAudit is who made a write, kept until the change it names is recorded.
+type HeldAudit struct {
+	Namespace, Name, ResourceVersion, UID, User, UserAgent string
+}
+
+// heldFor is how long an audit event waits for its change before it's dropped.
+const heldFor = 10 * time.Minute
+
+// HoldAudit keeps a for when its change arrives (see HeldAudits), and drops the cluster's
+// held audits older than heldFor.
+func (w *Writer) HoldAudit(ctx context.Context, cluster string, a HeldAudit) error {
+	now := time.Now()
+	if _, err := w.tx.ExecContext(ctx, "DELETE FROM held_audits WHERE cluster = ? AND ts < ?",
+		cluster, now.Add(-heldFor).UnixNano()); err != nil {
+		return err
+	}
+	_, err := w.tx.ExecContext(ctx, `INSERT INTO held_audits
+		(cluster, namespace, name, resource_version, uid, author, user_agent, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		cluster, a.Namespace, a.Name, a.ResourceVersion, a.UID, a.User, a.UserAgent, now.UnixNano())
+	return err
+}
+
+// HasHeldAudits reports whether cluster has any, so ingest can skip looking per change.
+func (w *Writer) HasHeldAudits(ctx context.Context, cluster string) (bool, error) {
+	var one int
+	err := w.tx.QueryRowContext(ctx, "SELECT 1 FROM held_audits WHERE cluster = ? LIMIT 1", cluster).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// TakeHeldAudits removes and returns the held audits for c: its resourceVersion, or for a
+// deletion, its UID.
+func (w *Writer) TakeHeldAudits(ctx context.Context, c *Change) ([]HeldAudit, error) {
+	where := `cluster = ? AND namespace = ? AND name = ? AND resource_version = ? AND resource_version != ''`
+	args := []any{c.Cluster, c.Namespace, c.Name, c.ResourceVersion}
+	if c.Type == Deleted {
+		where = `cluster = ? AND namespace = ? AND name = ? AND uid = ? AND uid != ''`
+		args = []any{c.Cluster, c.Namespace, c.Name, c.UID}
+	}
+	rows, err := w.tx.QueryContext(ctx, "SELECT namespace, name, resource_version, uid, author, user_agent FROM held_audits WHERE "+where, args...)
+	if err != nil {
+		return nil, err
+	}
+	var out []HeldAudit
+	for rows.Next() {
+		var a HeldAudit
+		if err := rows.Scan(&a.Namespace, &a.Name, &a.ResourceVersion, &a.UID, &a.User, &a.UserAgent); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(out) == 0 {
+		return out, err
+	}
+	_, err = w.tx.ExecContext(ctx, "DELETE FROM held_audits WHERE "+where, args...)
+	return out, err
+}
+
 // The Store methods below each write in a transaction of their own.
 
 func (s *Store) Record(ctx context.Context, c *Change, listed bool, attribute func(*Change)) (ok bool, err error) {

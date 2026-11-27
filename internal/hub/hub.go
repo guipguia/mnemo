@@ -129,6 +129,10 @@ func ingestTx(ctx context.Context, s *store.Writer, b Batch) error {
 		}
 		return err // stale: already stored, or superseded; the agent moves on
 	}
+	held, err := s.HasHeldAudits(ctx, b.Cluster)
+	if err != nil {
+		return err
+	}
 	for _, it := range b.Items {
 		it.Cluster = b.Cluster
 		if b.Stream == BackfillStream {
@@ -140,8 +144,22 @@ func ingestTx(ctx context.Context, s *store.Writer, b Batch) error {
 				continue
 			}
 		}
-		if _, err := s.Record(ctx, &it.Change, it.Listed, func(c *store.Change) { attribute(c, it.Managers) }); err != nil {
+		ok, err := s.Record(ctx, &it.Change, it.Listed, func(c *store.Change) { attribute(c, it.Managers) })
+		if err != nil {
 			return err
+		}
+		if ok && held { // its audit event may have come first
+			as, err := s.TakeHeldAudits(ctx, &it.Change)
+			if err != nil {
+				return err
+			}
+			for _, h := range as {
+				a := Audit(h)
+				if _, err := s.Reattribute(ctx, b.Cluster, a.Namespace, a.Name, a.ResourceVersion, a.UID,
+					func(c *store.Change) { attributeUser(c, a) }); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	for _, sy := range b.Synced {
@@ -153,14 +171,18 @@ func ingestTx(ctx context.Context, s *store.Writer, b Batch) error {
 			return err
 		}
 	}
-	// After Items: audit events trail the watch, often by seconds, so the change is usually
-	// recorded already, possibly in this same batch.
-	// ponytail: an audit event that beats its watch event is dropped and the field manager stays
-	// the author; hold unmatched ones for a few minutes if that shows up in practice.
+	// After Items: audit events usually trail the watch, so the change is recorded already,
+	// possibly in this same batch. One that comes first is held until its change does.
 	for _, a := range b.Audits {
-		if _, err := s.Reattribute(ctx, b.Cluster, a.Namespace, a.Name, a.ResourceVersion, a.UID,
-			func(c *store.Change) { attributeUser(c, a) }); err != nil {
+		n, err := s.Reattribute(ctx, b.Cluster, a.Namespace, a.Name, a.ResourceVersion, a.UID,
+			func(c *store.Change) { attributeUser(c, a) })
+		if err != nil {
 			return err
+		}
+		if n == 0 {
+			if err := s.HoldAudit(ctx, b.Cluster, store.HeldAudit(a)); err != nil {
+				return err
+			}
 		}
 	}
 	if len(b.Deploys) > 0 {
