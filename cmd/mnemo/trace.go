@@ -60,7 +60,7 @@ func tracing(ctx context.Context, mode string) (shutdown func(context.Context) e
 	} else if err != nil {
 		return nil, err
 	}
-	exp := &otlpExporter{url: endpoint, headers: headers, client: &http.Client{Timeout: 10 * time.Second}}
+	exp := newOTLPExporter(endpoint, headers)
 	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exp), sdktrace.WithResource(res))
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) { slog.Warn("tracing", "err", err) }))
 	otel.SetTracerProvider(tp)
@@ -113,6 +113,12 @@ type otlpExporter struct {
 	url     string
 	headers http.Header
 	client  *http.Client
+}
+
+func newOTLPExporter(endpoint string, headers http.Header) *otlpExporter {
+	return &otlpExporter{url: endpoint, headers: headers, client: &http.Client{Timeout: 10 * time.Second,
+		// On a 301-303 Go would resend as a GET without the spans, and count it as sent.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
 func (e *otlpExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
