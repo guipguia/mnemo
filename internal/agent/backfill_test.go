@@ -111,6 +111,12 @@ func TestBackfill(t *testing.T) {
 			line("10:03:00", "create", "carol", "", uri, cmJSON("u2", "4", "c", ""))},
 		want: "added alice 1, modified bob 2, deleted system:serviceaccount:x:ctrl , added carol 4",
 	}, {
+		name: "a graceful delete, then the final one: the first deleter is credited",
+		logs: []string{line("10:00:00", "create", "alice", "", uri, cmJSON("u1", "1", "a", "")) +
+			line("10:01:00", "delete", "carol", "", uri, cmJSON("u1", "2", "a", `,"deletionTimestamp":"2026-01-01T10:01:00Z"`)) +
+			line("10:01:30", "delete", "system:node:n1", "", uri, fmt.Sprintf(statusFor, "u1"))},
+		want: "added alice 1, deleted carol ",
+	}, {
 		name: "revisions order an object's writes, whatever the clocks say",
 		logs: []string{
 			line("10:00:00", "create", "alice", "", uri, cmJSON("u1", "1", "a", "")) +

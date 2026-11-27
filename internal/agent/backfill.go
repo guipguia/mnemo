@@ -177,6 +177,7 @@ func (b *Backfill) Run(ctx context.Context) (int, error) {
 //   - nothing else, but an object's first write that isn't a create becomes a baseline:
 //     the object existed before the logs start.
 func (b *Backfill) order() []write {
+	b.skipped = 0
 	writes := slices.Clone(b.writes)
 	slices.SortStableFunc(writes, func(x, y write) int { return x.at.Compare(y.at) })
 	kinds := map[string]string{} // a delete's response rarely carries the object: take the kind from other writes
@@ -189,8 +190,13 @@ func (b *Backfill) order() []write {
 	}
 	var kept []write
 	positions := map[string][]int{} // object -> its indexes in kept
+	deleted := map[string]bool{}    // by UID: a graceful delete, then the final one, credit the first
 	for _, w := range writes {
 		if w.delete {
+			if deleted[w.item.UID] {
+				continue
+			}
+			deleted[w.item.UID] = true
 			if w.item.Kind == "" {
 				w.item.Kind = kinds[w.resource]
 			}
