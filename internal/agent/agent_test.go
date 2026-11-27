@@ -307,3 +307,26 @@ func TestParseResource(t *testing.T) {
 		}
 	}
 }
+
+func TestHeartbeat(t *testing.T) {
+	heartbeatEvery = 10 * time.Millisecond
+	defer func() { heartbeatEvery = time.Minute }()
+	h := newHarness(t)
+	ctx := context.Background()
+	h.st.SetCheckpoint(ctx, "test", "v1/configmaps", "500") // resume: no list needed
+	hub.Resume(ctx, h.st, "test", "kube-system-uid")
+	stop := h.run()
+	defer stop()
+	h.nextWatch("500")
+	start := time.Now()
+	// No changes at all, yet the hub keeps hearing from the cluster.
+	for deadline := start.Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		cs, _ := h.st.Clusters(ctx)
+		if len(cs) == 1 && cs[0].LastSeen.After(start) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no heartbeat")
+		}
+	}
+}

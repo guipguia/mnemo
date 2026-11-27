@@ -87,6 +87,12 @@ hub:
     existingSecret: ""
     image: litestream/litestream:0.5.17@sha256:4b02b9859a6b6b4087d8b8944e15f7e984bd7957cba322bbeee38b0e27b9656a
     resources: {}
+  # Prometheus metrics on a separate port (9090, Service port "metrics"). Not behind the
+  # access policy: keep it off ingresses. See docs/metrics.md.
+  metrics:
+    enabled: false
+    # Create a Prometheus Operator ServiceMonitor for it.
+    serviceMonitor: false
   service:
     type: ClusterIP
     port: 80

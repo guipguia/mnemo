@@ -35,7 +35,8 @@ Design details: [docs/design.md](docs/design.md).
 - [x] Policy: IdP groups/users → clusters × namespaces
 - [ ] Optional mode: evaluate access against each cluster's recorded Kubernetes RBAC
 - [ ] Agent ↔ hub mTLS
-- [ ] Prometheus metrics, OpenTelemetry traces
+- [x] Prometheus metrics ([docs/metrics.md](docs/metrics.md))
+- [ ] OpenTelemetry traces
 - [ ] MCP server for AI incident agents
 - [ ] Headlamp plugin
 - [ ] Published scale and resource benchmarks

@@ -32,6 +32,24 @@ spec:
       {{- if and (eq .Values.hub.service.type "NodePort") .Values.hub.service.nodePort }}
       nodePort: {{ .Values.hub.service.nodePort }}
       {{- end }}
+    {{- if .Values.hub.metrics.enabled }}
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+    {{- end }}
+{{- if and .Values.hub.metrics.enabled .Values.hub.metrics.serviceMonitor }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "mnemo.fullname" . }}
+  labels: {{- include "mnemo.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels: {{- include "mnemo.selector" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+{{- end }}
 {{- if ne .Values.hub.auth.mode "none" }}
 ---
 apiVersion: v1
