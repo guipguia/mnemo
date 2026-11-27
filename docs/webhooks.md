@@ -91,6 +91,42 @@ expected = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
 ok = hmac.compare_digest(request.headers["X-Mnemo-Signature"], expected)
 ```
 
+## Grafana annotations
+
+Set `format: grafana` to draw changes on your dashboards, through Grafana's
+[annotations API](https://grafana.com/docs/grafana/latest/developers/http_api/annotations/):
+
+```yaml
+url: https://mnemo.example.com      # optional: annotations link to the change in the UI
+webhooks:
+  - name: grafana
+    url: https://grafana.example.com/api/annotations
+    format: grafana
+    token: glsa_XXXX                # service account token: Editor role, or annotations:create (Enterprise/Cloud RBAC)
+    delay: 35s                      # optional: see "Attribution"
+    match:
+      clusters: [prod]
+      sources: [gitops, manual]     # skip the controller noise
+```
+
+Each change becomes an organization annotation at the time of the change. To show them, add
+an annotation query to a dashboard: data source `-- Grafana --`, filter by `Tags`, for example
+`mnemo` and `cluster:prod`. That query shows at most 100 annotations by default (`Max limit`):
+raise it, or narrow `match`, on busy clusters.
+
+Tags: `mnemo`, `cluster:<name>`, `kind:<kind>`, `type:<type>`, `source:<source>`,
+`namespace:<name>` (namespaced objects only), and `drift` (drift only).
+
+Delivery works as above, with no dedupe on Grafana's side: a retry after a lost response or a
+hub crash can draw an annotation twice. `secret` is pointless here, since Grafana doesn't
+check signatures.
+
+`token` also works without `format`, for any receiver that wants a bearer token. Unlike
+`secret`, it travels with every request: use an `https` URL (the hub warns at startup if not).
+
+A receiver that answers 401 or 403, such as Grafana after the token expires, is logged at
+error level: it won't fix itself, and later changes wait behind it until the token is replaced.
+
 ## Attribution
 
 With [audit attribution](audit.md), the person behind a change arrives a little after the
