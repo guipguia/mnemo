@@ -28,14 +28,22 @@ serves the UI, API and MCP.
   availability, not for write throughput.
 - **Webhooks and retention** run on one hub, the leader, which holds a PostgreSQL advisory
   lock on a connection of its own. If it dies or loses the database, another hub takes over
-  within about 5 seconds and resumes webhook delivery from the stored position. While a
-  partitioned old leader notices, both may deliver for a few seconds: delivery is
-  at-least-once, and receivers dedupe on `id`.
+  within about 30 seconds (the lock's session asks the server to drop it once the hub goes
+  silent) and resumes webhook delivery from the stored position. Receivers may see up to a
+  batch (100 changes) again, plus anything a cut-off old leader sends before it notices:
+  delivery is at-least-once, and receivers dedupe on `id`.
 - **Logins** (`--auth oidc`) are signed cookies: give every hub the same
   `MNEMO_SESSION_KEY` (the chart does), or a login on one hub fails on another.
 - `mnemo_ingest_failures_total` is per hub; the other metrics read the shared database.
 
-Each hub uses one connection for its work and one for the leader lock.
+Each hub uses one connection for its work and one for the leader lock. The leader lock is a
+session advisory lock: connect hubs to PostgreSQL directly or through session pooling, not a
+transaction-pooling PgBouncer.
+
+**Upgrading to the release that added several hubs:** hubs from before it don't take the
+write lock or elect a leader, so they must never run beside newer ones. With one replica the
+chart replaces the pod (`Recreate`), which is safe; raise `hub.replicas` only after the
+upgrade is done.
 
 ## Moving from SQLite
 

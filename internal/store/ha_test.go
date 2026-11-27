@@ -92,12 +92,14 @@ func TestLeader(t *testing.T) {
 	a, b := twoHubs(t)
 	var leading atomic.Int32
 	var which atomic.Value
+	var strict atomic.Bool // no overlap allowed: a leader that loses its session may overlap briefly
+	strict.Store(true)
 	run := func(s *Store, name string) (stop func()) {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() {
 			s.Leader(ctx, func(ctx context.Context) {
-				if leading.Add(1) != 1 {
+				if leading.Add(1) != 1 && strict.Load() {
 					t.Error("two leaders at once")
 				}
 				which.Store(name)
@@ -126,4 +128,20 @@ func TestLeader(t *testing.T) {
 	}
 	stopA() // a shuts down: b takes over
 	waitLeader("b")
+
+	// b's connection dies (as when its node does): a new hub leads, and b stands down.
+	strict.Store(false)
+	c, d := twoHubs(t)
+	stopC := run(c, "c")
+	defer stopC()
+	if _, err := d.db.ExecContext(t.Context(), `SELECT pg_terminate_backend(pid) FROM pg_locks
+		WHERE locktype = 'advisory' AND granted AND pid != pg_backend_pid()`); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader("c")
+	for deadline := time.Now().Add(5 * time.Second); leading.Load() != 1; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d leaders: b never stood down", leading.Load())
+		}
+	}
 }
