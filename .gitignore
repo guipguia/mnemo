@@ -8,3 +8,6 @@ ui/dist/*
 !ui/dist/.gitkeep
 demo/node_modules/
 /kubectl-mnemo
+headlamp/dist/
+headlamp/*.tar.gz
+headlamp/.eslintcache

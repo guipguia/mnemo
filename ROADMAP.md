@@ -39,7 +39,7 @@ Design details: [docs/design.md](docs/design.md).
 - [x] Prometheus metrics ([docs/metrics.md](docs/metrics.md))
 - [x] OpenTelemetry traces ([docs/tracing.md](docs/tracing.md))
 - [x] MCP server for AI incident agents ([docs/mcp.md](docs/mcp.md))
-- [ ] Headlamp plugin
+- [x] Headlamp plugin ([docs/headlamp.md](docs/headlamp.md))
 - [x] Published scale and resource benchmarks ([docs/benchmarks.md](docs/benchmarks.md); agent resource use still to measure)
 
 ## Later
