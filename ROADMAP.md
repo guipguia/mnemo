@@ -37,7 +37,7 @@ Design details: [docs/design.md](docs/design.md).
 - [x] Optional mode: evaluate access against each cluster's recorded Kubernetes RBAC
 - [x] Agent ↔ hub mTLS ([docs/mtls.md](docs/mtls.md))
 - [x] Prometheus metrics ([docs/metrics.md](docs/metrics.md))
-- [ ] OpenTelemetry traces
+- [x] OpenTelemetry traces ([docs/tracing.md](docs/tracing.md))
 - [x] MCP server for AI incident agents ([docs/mcp.md](docs/mcp.md))
 - [ ] Headlamp plugin
 - [x] Published scale and resource benchmarks ([docs/benchmarks.md](docs/benchmarks.md); agent resource use still to measure)

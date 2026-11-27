@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/guipguia/mnemo/internal/store"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // Client is how a remote agent talks to the hub.
@@ -24,8 +25,17 @@ type Client struct {
 func NewClient(hubURL, token string, tlsConfig *tls.Config) *Client {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.TLSClientConfig = tlsConfig
-	return &Client{url: hubURL, token: token, http: &http.Client{Timeout: time.Minute, Transport: t}}
+	return &Client{url: hubURL, token: token, http: &http.Client{Timeout: time.Minute, Transport: traced{otelhttp.NewTransport(t), t}}}
 }
+
+// traced adds a client span (and traceparent) to each request, and keeps
+// CloseIdleConnections working, which otelhttp's Transport doesn't pass on.
+type traced struct {
+	*otelhttp.Transport
+	base *http.Transport
+}
+
+func (t traced) CloseIdleConnections() { t.base.CloseIdleConnections() }
 
 func (c *Client) Push(ctx context.Context, b Batch) error {
 	body, err := json.Marshal(b)
