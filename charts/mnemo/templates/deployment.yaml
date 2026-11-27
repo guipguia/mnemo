@@ -18,7 +18,7 @@ spec:
   replicas: 1
   # One hub at a time: SQLite's ReadWriteOnce volume can't attach to two pods, and a hub from
   # before multi-hub support must never run beside a newer one.
-  strategy: {type: Recreate}
+  strategy: {type: Recreate, rollingUpdate: null}  # null: clears what a multi-replica release left
   {{- end }}
   selector:
     matchLabels: {{- include "mnemo.selector" . | nindent 6 }}
