@@ -378,6 +378,28 @@ func TestHeldAudits(t *testing.T) {
 		if got, err := w.TakeHeldAudits(ctx, del); err != nil || len(got) != 1 || got[0].User != "dave" {
 			t.Errorf("deletion: %+v, %v; want dave's", got, err)
 		}
+		// A delete answered with the object: its audit has the resourceVersion, no UID.
+		if err := w.HoldAudit(ctx, "prod", HeldAudit{Namespace: "shop", Name: "cfg", ResourceVersion: "31", User: "erin"}); err != nil {
+			return err
+		}
+		del2 := &Change{Ref: mod.Ref, ResourceVersion: "31", UID: "u2", Type: Deleted}
+		if got, err := w.TakeHeldAudits(ctx, del2); err != nil || len(got) != 1 || got[0].User != "erin" {
+			t.Errorf("deletion by resourceVersion: %+v, %v; want erin's", got, err)
+		}
+		// Too old: never applied, and purged.
+		if _, err := w.tx.ExecContext(ctx, "INSERT INTO held_audits VALUES ('prod', 'shop', 'old', '40', '', 'zed', '', 1)"); err != nil {
+			return err
+		}
+		if got, _ := w.TakeHeldAudits(ctx, &Change{Ref: Ref{Cluster: "prod", Namespace: "shop", Name: "old"}, ResourceVersion: "40"}); len(got) != 0 {
+			t.Errorf("stale held audit applied: %+v", got)
+		}
+		if err := w.PurgeHeldAudits(ctx); err != nil {
+			return err
+		}
+		var n int
+		if err := w.tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM held_audits").Scan(&n); err != nil || n != 0 {
+			t.Errorf("%d held audits left after the purge (%v)", n, err)
+		}
 		return nil
 	})
 	if err != nil {

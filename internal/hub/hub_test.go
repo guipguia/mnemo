@@ -220,10 +220,10 @@ func TestIngestAudit(t *testing.T) {
 	if len(hist) != 3 || hist[1].Author != "carol@example.com" || hist[0].Type != store.Deleted || hist[0].Author != "dave@example.com" {
 		t.Errorf("history %+v: want the held audits applied (carol modified, dave deleted)", hist)
 	}
-	// Taken once: a later change with the same resourceVersion elsewhere isn't credited.
-	ingest(Batch{Items: []Item{item("other", "20", `{"data":{}}`, "kubectl-create")}})
-	if h, _ := s.History(ctx, store.Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: "shop", Name: "other"}, 1); len(h) != 1 || h[0].Author != "kubectl-create" {
-		t.Errorf("other: %+v", h)
+	// Taken once: the same object's next life isn't credited to the earlier deleter.
+	ingest(Batch{Items: []Item{item("cfg", "22", `{"data":{"a":"3"}}`, "kubectl-create")}})
+	if h, _ := s.History(ctx, store.Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: "shop", Name: "cfg"}, 1); len(h) != 1 || h[0].Author != "kubectl-create" {
+		t.Errorf("recreated cfg: %+v, want the field manager", h)
 	}
 }
 

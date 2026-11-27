@@ -173,6 +173,11 @@ func ingestTx(ctx context.Context, s *store.Writer, b Batch) error {
 	}
 	// After Items: audit events usually trail the watch, so the change is recorded already,
 	// possibly in this same batch. One that comes first is held until its change does.
+	if len(b.Audits) > 0 {
+		if err := s.PurgeHeldAudits(ctx); err != nil {
+			return err
+		}
+	}
 	for _, a := range b.Audits {
 		n, err := s.Reattribute(ctx, b.Cluster, a.Namespace, a.Name, a.ResourceVersion, a.UID,
 			func(c *store.Change) { attributeUser(c, a) })

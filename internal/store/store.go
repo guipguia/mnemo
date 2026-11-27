@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS held_audits ( -- audit events that arrived before the
 	ts               INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS held_audits_object ON held_audits (cluster, namespace, name);
+CREATE INDEX IF NOT EXISTS held_audits_ts     ON held_audits (ts);
 CREATE TABLE IF NOT EXISTS checkpoints (
 	cluster          TEXT NOT NULL,
 	resource         TEXT NOT NULL,
