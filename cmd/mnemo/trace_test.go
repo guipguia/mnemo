@@ -128,3 +128,18 @@ func TestOTLPHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestOTLPRedirectFails(t *testing.T) {
+	gets := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/moved" {
+			gets++
+			return
+		}
+		http.Redirect(w, r, "/moved", http.StatusFound)
+	}))
+	defer srv.Close()
+	if err := newOTLPExporter(srv.URL+"/v1/traces", http.Header{}).ExportSpans(t.Context(), nil); err == nil || gets != 0 {
+		t.Errorf("redirected export: err %v, %d requests to the target; want an error and none", err, gets)
+	}
+}
