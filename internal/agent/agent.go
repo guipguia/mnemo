@@ -261,11 +261,9 @@ func (a *Agent) relistPages(ctx context.Context, gvr schema.GroupVersionResource
 		if hold && !last {
 			continue
 		}
-		for i, hb := range held {
-			if i < len(held)-1 || !last {
-				if len(hb.Items)+len(hb.Events) == 0 {
-					continue // a page can come back empty (filtered): nothing to push
-				}
+		for _, hb := range held {
+			if len(hb.Items)+len(hb.Events) == 0 && hb.Checkpoints == nil {
+				continue // a page can come back empty (filtered); the last one always goes
 			}
 			if err := a.push(ctx, key(gvr), hb); err != nil {
 				return "", err
