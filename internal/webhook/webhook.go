@@ -154,12 +154,19 @@ func newAnnotation(c store.Change, link string) annotation {
 
 // Run delivers to every webhook until ctx is done.
 func Run(ctx context.Context, st *store.Store, c *Config) {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := newClient()
 	var wg sync.WaitGroup
 	for _, w := range c.Webhooks {
 		wg.Go(func() { w.run(ctx, st, strings.TrimSuffix(c.URL, "/"), client) })
 	}
 	wg.Wait()
+}
+
+// newClient follows no redirects: on a 301-303 Go would resend the POST as a GET without
+// its body, and that GET's 2xx would count as delivered. A 3xx is a failed delivery instead.
+func newClient() *http.Client {
+	return &http.Client{Timeout: 10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 // poll is how often a caught-up webhook checks for new changes.
@@ -284,6 +291,9 @@ func (w Webhook) post(ctx context.Context, client *http.Client, body []byte, id 
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode/100 == 3 {
+		return fmt.Errorf("%s: redirected; set the webhook's url to where it points", resp.Status) // not the Location: it may hold the secret too
+	}
 	if resp.StatusCode/100 != 2 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
