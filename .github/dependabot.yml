@@ -11,6 +11,11 @@ updates:
     schedule: {interval: weekly}
     groups:
       ui: {patterns: ["*"]}
+  - package-ecosystem: npm
+    directory: /headlamp
+    schedule: {interval: weekly}
+    groups:
+      headlamp: {patterns: ["*"]}
   - package-ecosystem: docker
     directory: /
     schedule: {interval: weekly}
