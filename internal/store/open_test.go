@@ -104,3 +104,17 @@ func TestCursorsClustersReattribute(t *testing.T) {
 		t.Errorf("cursor: %d, %v, %v", id, ok, err)
 	}
 }
+
+func TestEventWithNUL(t *testing.T) {
+	s, err := openTest(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now()
+	e := Event{UID: "e", Type: "Warning", Reason: "Unhealthy",
+		Message: "probe said \x00 nothing", Count: 1, FirstTime: now, LastTime: now}
+	if err := s.RecordEvents(t.Context(), "prod", []Event{e}); err != nil {
+		t.Fatal(err) // PostgreSQL rejects NUL in text: one bad event must not stall the batch
+	}
+}

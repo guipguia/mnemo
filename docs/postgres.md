@@ -10,7 +10,7 @@ MNEMO_DB='postgres://mnemo:...@db.example.com:5432/mnemo?sslmode=verify-full' mn
 Only URLs (`postgres://` or `postgresql://`) are recognized; anything else is a SQLite file
 path. The URL takes the usual [libpq parameters](https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-PARAMKEYWORDS),
 such as `sslmode` and `search_path`. The hub creates its tables on startup, so its user needs
-`CREATE` on the schema. Logs show the URL with the password hidden.
+`CREATE` on the schema. Logs show the URL with the password hidden, in the user info or as `?password=`.
 
 Chart: put the URL in a Secret under the key `url` and set `hub.database.existingSecret`. No
 PVC is created, and `hub.backup` (Litestream, for SQLite) is refused: back up PostgreSQL the
@@ -26,6 +26,6 @@ The hub also uses one database connection, so writes are serialized exactly as w
 
 ## Moving from SQLite
 
-There's no migration tool yet. A new hub on PostgreSQL starts with an empty history; agents
-re-send every object's current state as a baseline when they reconnect, but the versions
-recorded before stay in the SQLite file.
+There's no migration tool yet. A new hub on PostgreSQL starts with an empty history. Restart
+the agents after switching: on startup they find no resume point and record every object's
+current state as a baseline. The versions recorded before stay in the SQLite file.
