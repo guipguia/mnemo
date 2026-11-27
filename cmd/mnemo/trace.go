@@ -77,7 +77,9 @@ func traced(h http.Handler) http.Handler {
 		return h
 	}
 	return otelhttp.NewHandler(h, "mnemo",
-		otelhttp.WithPublicEndpointFn(func(r *http.Request) bool { return r.URL.Path != "/api/v1/ingest" }),
+		otelhttp.WithPublicEndpointFn(func(r *http.Request) bool {
+			return r.URL.Path != "/api/v1/ingest" && r.URL.Path != "/api/v1/checkpoints" // the agent's calls
+		}),
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
 			if r.Pattern != "" {
 				return r.Pattern

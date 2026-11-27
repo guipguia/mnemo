@@ -33,6 +33,7 @@ func TestTracing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { tracingOn = false })
 
 	st, err := store.Open(filepath.Join(t.TempDir(), "mnemo.db"))
 	if err != nil {
