@@ -204,6 +204,27 @@ func TestIngestAudit(t *testing.T) {
 			t.Errorf("%s = %q, want %q", k, got[k], want)
 		}
 	}
+
+	// An audit event that comes before its change (the agent batches watch events) is held
+	// and applied when the change arrives: a modification by resourceVersion, a deletion by UID.
+	ingest(Batch{Audits: []Audit{
+		{Namespace: "shop", Name: "cfg", ResourceVersion: "20", User: "carol@example.com", UserAgent: "kubectl/v1.34.0"},
+		{Namespace: "shop", Name: "cfg", UID: "cfg-uid", User: "dave@example.com", UserAgent: "kubectl/v1.34.0"},
+	}})
+	ingest(Batch{Items: []Item{item("cfg", "20", `{"data":{"a":"2"}}`, "kubectl-edit")}})
+	ingest(Batch{Items: []Item{item("cfg", "21", "", "")}})
+	hist, err := s.History(ctx, store.Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: "shop", Name: "cfg"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 3 || hist[1].Author != "carol@example.com" || hist[0].Type != store.Deleted || hist[0].Author != "dave@example.com" {
+		t.Errorf("history %+v: want the held audits applied (carol modified, dave deleted)", hist)
+	}
+	// Taken once: the same object's next life isn't credited to the earlier deleter.
+	ingest(Batch{Items: []Item{item("cfg", "22", `{"data":{"a":"3"}}`, "kubectl-create")}})
+	if h, _ := s.History(ctx, store.Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: "shop", Name: "cfg"}, 1); len(h) != 1 || h[0].Author != "kubectl-create" {
+		t.Errorf("recreated cfg: %+v, want the field manager", h)
+	}
 }
 
 // A slow original push that finishes after its retry and a later batch must not store its
