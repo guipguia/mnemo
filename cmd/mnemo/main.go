@@ -59,6 +59,7 @@ func run(ctx context.Context, mode string, args []string) error {
 	token := fs.String("token", "", "shared agent/hub token (default $MNEMO_TOKEN)")
 	var db, listen, metricsListen, webhooks, cluster, hubURL, kubeconfig, resources *string
 	var auditListen, auditToken, auditCert, auditKey *string
+	var agentListen, agentCert, agentKey, agentCA, hubCA, clientCert, clientKey *string
 	var retentionDays, retentionVersions, eventRetentionDays *int
 	var newAuth func(context.Context) (*auth.Auth, error)
 	if mode == "hub" || mode == "all" {
@@ -69,6 +70,10 @@ func run(ctx context.Context, mode string, args []string) error {
 		retentionVersions = fs.Int("retention-versions", 0, "keep at most this many versions per object (0: no limit)")
 		webhooks = fs.String("webhooks", "", "outbound webhooks file (default: none); see docs/webhooks.md")
 		eventRetentionDays = fs.Int("event-retention-days", 30, "delete archived Kubernetes Events last seen this many days ago (0: keep forever)")
+		agentListen = fs.String("agent-listen", "", "serve agents over mutual TLS here, e.g. :8443, and stop taking pushes on --listen (default: off); see docs/mtls.md")
+		agentCert = fs.String("agent-tls-cert", "", "the hub's TLS certificate for --agent-listen")
+		agentKey = fs.String("agent-tls-key", "", "the hub's TLS key for --agent-listen")
+		agentCA = fs.String("agent-ca", "", "CA that signs agent client certificates, for --agent-listen")
 		newAuth = authFlags(fs)
 	}
 	if mode == "agent" || mode == "all" {
@@ -82,6 +87,9 @@ func run(ctx context.Context, mode string, args []string) error {
 	}
 	if mode == "agent" {
 		hubURL = fs.String("hub", "", "hub URL (required)")
+		hubCA = fs.String("hub-ca", "", "CA to trust for the hub's certificate (default: the system's)")
+		clientCert = fs.String("client-cert", "", "client certificate for a hub with --agent-listen; must name --cluster")
+		clientKey = fs.String("client-key", "", "client key for --client-cert")
 	}
 	if mode != "hub" && mode != "agent" && mode != "all" {
 		return fmt.Errorf("unknown mode %q: want hub, agent, or all", mode)
@@ -156,14 +164,35 @@ func run(ctx context.Context, mode string, args []string) error {
 			if *hubURL == "" || *token == "" {
 				return errors.New("agent mode needs --hub and --token")
 			}
-			c := hub.NewClient(strings.TrimSuffix(*hubURL, "/"), *token)
+			tc, err := hub.ClientTLS(*hubCA, *clientCert, *clientKey)
+			if err != nil {
+				return fmt.Errorf("agent TLS: %w", err)
+			}
+			c := hub.NewClient(strings.TrimSuffix(*hubURL, "/"), *token, tc)
 			ag.Push, ag.Resume = c.Push, c.Resume
 		}
 	}
 
-	errc := make(chan error, 3)
+	errc := make(chan error, 4)
 	if st != nil {
-		srv := &http.Server{Addr: *listen, Handler: routes(st, *token, au), ReadHeaderTimeout: 10 * time.Second}
+		pushToken := *token // with an agent listener, pushes go there only: the token alone isn't enough
+		if *agentListen != "" {
+			if *agentCert == "" || *agentKey == "" || *agentCA == "" {
+				return errors.New("--agent-listen needs --agent-tls-cert, --agent-tls-key and --agent-ca")
+			}
+			if *token == "" {
+				return errors.New("--agent-listen needs --token: agents send it too")
+			}
+			tc, err := hub.AgentTLS(*agentCert, *agentKey, *agentCA)
+			if err != nil {
+				return fmt.Errorf("agent listener: %w", err)
+			}
+			asrv := &http.Server{Addr: *agentListen, Handler: hub.AgentHandler(st, *token), TLSConfig: tc, ReadHeaderTimeout: 10 * time.Second}
+			go func() { errc <- asrv.ListenAndServeTLS("", "") }()
+			go func() { <-ctx.Done(); asrv.Close() }()
+			pushToken = ""
+		}
+		srv := &http.Server{Addr: *listen, Handler: routes(st, pushToken, au), ReadHeaderTimeout: 10 * time.Second}
 		go func() { errc <- srv.ListenAndServe() }()
 		go func() {
 			<-ctx.Done()
@@ -171,7 +200,7 @@ func run(ctx context.Context, mode string, args []string) error {
 			defer cancel()
 			srv.Shutdown(shutdown)
 		}()
-		slog.Info("hub listening", "version", version, "addr", *listen, "db", redact(*db), "ingest", *token != "", "auth", au.Mode(),
+		slog.Info("hub listening", "version", version, "addr", *listen, "db", redact(*db), "ingest", pushToken != "", "agentListen", *agentListen, "auth", au.Mode(),
 			"webhooks", *webhooks, "retentionDays", *retentionDays, "retentionVersions", *retentionVersions, "eventRetentionDays", *eventRetentionDays)
 		if *metricsListen != "" {
 			// Separate listener: metrics name clusters and webhooks, and skip the access policy.

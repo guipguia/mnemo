@@ -30,6 +30,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if not .Values.agent.audit.existingSecret }}{{ fail "agent.audit.existingSecret is required: a Secret with key token, also used in the API server's webhook config" }}{{ end }}
 {{- if not .Values.agent.audit.tlsSecret }}{{ fail "agent.audit.tlsSecret is required: the API server only sends the token over HTTPS" }}{{ end }}
 {{- end }}
+{{- if and (include "mnemo.hasHub" .) .Values.hub.agentListener.enabled (not .Values.hub.agentListener.tlsSecret) }}{{ fail "hub.agentListener.tlsSecret is required: a Secret with tls.crt, tls.key and ca.crt" }}{{ end }}
 {{- if and (include "mnemo.hasHub" .) .Values.hub.database.existingSecret .Values.hub.backup.enabled }}{{ fail "hub.backup (Litestream) backs up SQLite; with hub.database, back up PostgreSQL your usual way" }}{{ end }}
 {{- if and (include "mnemo.hasHub" .) .Values.hub.backup.enabled (not .Values.hub.backup.url) }}{{ fail "hub.backup.url is required: where Litestream replicates the database" }}{{ end }}
 {{- range .Values.agent.watch }}{{ if or (eq . "v1/secrets") (hasSuffix "/secrets" .) }}{{ fail "secrets are never recorded: mnemo would store their values" }}{{ end }}{{ end }}
