@@ -31,6 +31,8 @@ can reconstruct any object at any point in time, not just get notified that it c
 - **Events archive:** Kubernetes Events are kept past their ~1h lifetime and shown on each
   object's timeline, with a Deployment's ReplicaSet and Pod events next to the change that
   caused them.
+- **Terminal:** `kubectl mnemo diff deploy/api --at 2h`. See
+  [docs/kubectl-plugin.md](docs/kubectl-plugin.md).
 - **Webhooks:** POST matching changes to Slack or your own receiver, signed, at least once
   and in order. Or draw them on Grafana dashboards as annotations. See
   [docs/webhooks.md](docs/webhooks.md).

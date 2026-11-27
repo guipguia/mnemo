@@ -228,7 +228,8 @@ Not to be confused with the inbound audit webhook used for attribution.
 - **Why not Kubernetes RBAC (yet):** the hub has no credentials for agent clusters, so it
   can't run a SubjectAccessReview, and IdP identities often don't match cluster identities
   (e.g. EKS IAM). Evaluating the RBAC objects mnemo already records is a possible later mode.
-- `kubectl mnemo` plugin, e.g. `kubectl mnemo diff deploy/api --at "yesterday 14:32"`.
+- `kubectl mnemo` plugin, e.g. `kubectl mnemo diff deploy/api --at 2h`. See
+  [kubectl-plugin.md](kubectl-plugin.md).
 
 ## Integrations
 

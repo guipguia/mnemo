@@ -24,7 +24,7 @@ Design details: [docs/design.md](docs/design.md).
 - [x] Grafana annotations integration ([docs/webhooks.md](docs/webhooks.md#grafana-annotations))
 - [x] Retention policy (age / count)
 - [x] Litestream backup option in the chart
-- [ ] `kubectl mnemo` plugin
+- [x] `kubectl mnemo` plugin ([docs/kubectl-plugin.md](docs/kubectl-plugin.md))
 - [x] Release supply chain: cosign signatures, SBOM, SLSA provenance
 
 ## v0.3: production-ish
