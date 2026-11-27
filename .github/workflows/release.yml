@@ -1,6 +1,6 @@
 # Push a tag like v0.1.0 to release. Tags with a suffix (v0.1.0-rc.1) become pre-releases.
 #
-# Produces: binaries + signed checksums on the GitHub release, a signed multi-arch image with
+# Produces: binaries and the Headlamp plugin + signed checksums on the GitHub release, a signed multi-arch image with
 # SBOM and provenance at ghcr.io/<owner>/mnemo, and a signed Helm chart at
 # oci://ghcr.io/<owner>/charts/mnemo. Signing is keyless (Sigstore, GitHub OIDC identity).
 name: Release
@@ -15,7 +15,28 @@ env:
   CHARTS: oci://ghcr.io/${{ github.repository_owner }}/charts
 
 jobs:
+  # The Headlamp plugin's ~1,300 build packages run here, without the release job's
+  # write and signing permissions; binaries checksums, signs and attests the tarball.
+  headlamp:
+    runs-on: ubuntu-latest
+    permissions: {contents: read}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: {node-version: 24, cache: npm, cache-dependency-path: headlamp/package-lock.json}
+      - name: Package
+        working-directory: headlamp
+        env: {VERSION: "${{ github.ref_name }}"}
+        run: |
+          npm ci
+          npm version --no-git-tag-version --allow-same-version "${VERSION#v}"
+          npm run package
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: headlamp, path: "headlamp/mnemo-headlamp-*.tar.gz", if-no-files-found: error}
+
   binaries:
+    needs: headlamp
     runs-on: ubuntu-latest
     permissions:
       contents: write      # create the release
@@ -29,20 +50,19 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod}
       - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: headlamp, path: dist}  # into dist: checksummed, signed and attested below
       - name: Build
         env: {VERSION: "${{ github.ref_name }}"}
         run: |
           (cd ui && npm ci && npm run build)
-          mkdir dist build && cp LICENSE README.md build/
+          mkdir -p dist build && cp LICENSE README.md build/
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             os=${target%/*} arch=${target#*/}
             CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o build/mnemo ./cmd/mnemo
             CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o build/kubectl-mnemo ./cmd/kubectl-mnemo
             tar -czf "dist/mnemo_${VERSION}_${os}_${arch}.tar.gz" -C build mnemo kubectl-mnemo LICENSE README.md
           done
-          # The Headlamp plugin, versioned like the release.
-          (cd headlamp && npm ci && npm version --no-git-tag-version --allow-same-version "${VERSION#v}" &&
-            npm run build && npm run package && mv mnemo-headlamp-*.tar.gz ../dist/)
           (cd dist && sha256sum *.tar.gz > checksums.txt)
       - name: Sign checksums
         run: cosign sign-blob --yes --bundle dist/checksums.txt.sigstore.json dist/checksums.txt

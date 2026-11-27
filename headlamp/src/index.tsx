@@ -17,8 +17,8 @@ type State =
 
 const useConf = store.useConfig();
 
-// Kinds mnemo never records.
-const unrecorded = new Set(['Secret', 'Event', 'Pod', 'ReplicaSet', 'Lease', 'EndpointSlice']);
+// Kinds mnemo never versions: Secrets are refused, Events archived apart.
+const unrecorded = new Set(['Secret', 'Event']);
 
 function History({ resource }: { resource: DetailsViewSectionProps['resource'] }) {
   const [state, setState] = useState<State>({ status: 'loading' });
@@ -29,18 +29,20 @@ function History({ resource }: { resource: DetailsViewSectionProps['resource'] }
   const namespace = json.metadata?.namespace ?? '';
   const name = json.metadata?.name ?? '';
   const kind: string = json.kind ?? '';
+  const viewed = getCluster();
 
   useEffect(() => {
     let live = true;
+    setState({ status: 'loading' }); // not the previous object's rows meanwhile
     (async () => {
-      const hub = await findHub(conf ?? {});
+      const hub = await findHub(conf ?? {}, viewed);
       if (!hub) {
         return {
           status: 'none',
           why: 'No mnemo hub found: set where it runs in the plugin settings.',
         } as State;
       }
-      const cluster = await mnemoCluster(hub, getCluster());
+      const cluster = await mnemoCluster(hub, viewed);
       if (!cluster) {
         return { status: 'none', why: 'mnemo does not record this cluster.' } as State;
       }
@@ -52,7 +54,7 @@ function History({ resource }: { resource: DetailsViewSectionProps['resource'] }
           err?.status === 401
             ? 'The mnemo hub asks for a login: the plugin needs a hub with --auth none, reached through the service proxy.'
             : err?.status === 403
-            ? 'You may not reach the mnemo hub (get on services/proxy for its Service).'
+            ? 'You may not reach the mnemo hub: it takes get on services/proxy for its Service, and list on services to find it (or set it in the plugin settings).'
             : `mnemo: ${err?.message ?? err}`;
         return { status: 'none', why } as State;
       })
@@ -60,7 +62,9 @@ function History({ resource }: { resource: DetailsViewSectionProps['resource'] }
     return () => {
       live = false;
     };
-  }, [conf?.cluster, conf?.namespace, conf?.service, group, kind, namespace, name]);
+  }, [viewed, conf?.cluster, conf?.namespace, conf?.service, group, kind, namespace, name]);
+
+  const link = conf?.uiURL && state.status === 'ok' ? uiLink(conf.uiURL, state.ref) : undefined;
 
   return (
     <SectionBox title="History (mnemo)">
@@ -92,8 +96,8 @@ function History({ resource }: { resource: DetailsViewSectionProps['resource'] }
               ]}
             />
           )}
-          {conf?.uiURL && (
-            <Link href={uiLink(conf.uiURL, state.ref)} target="_blank" rel="noopener noreferrer">
+          {link && (
+            <Link href={link} target="_blank" rel="noopener noreferrer">
               Open in mnemo: diffs and the object at any time
             </Link>
           )}

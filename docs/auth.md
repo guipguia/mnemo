@@ -135,4 +135,7 @@ With oauth2-proxy as a reverse proxy, `--pass-user-headers` sets `X-Forwarded-Us
 `X-Auth-Request-User` and `X-Auth-Request-Groups`.
 
 Keep the trusted range as narrow as possible (the proxy's pods or nodes), and make sure the
-proxy strips these headers from incoming client requests.
+proxy strips these headers from incoming client requests. **Never include the Kubernetes API
+server's addresses** (or a node range that covers them): its service proxy
+(`/api/v1/namespaces/.../services/mnemo:http/proxy/...`) passes client headers through, so
+anyone allowed `services/proxy` on the hub could claim to be any user.

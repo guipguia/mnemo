@@ -31,12 +31,14 @@ describe('mnemo', () => {
     expect(matchCluster(clusters, 'u1', 'kind-dev')).toBe('prod');
     expect(matchCluster(clusters, undefined, 'kind-dev')).toBe('kind-dev');
     expect(matchCluster(clusters, 'u9', 'nope')).toBeUndefined();
+    expect(matchCluster(clusters, 'u9', 'prod')).toBeUndefined(); // same name, another cluster
   });
 
   it('builds API paths and UI links', () => {
     expect(historyPath(ref)).toBe(
       '/api/v1/history?cluster=prod&group=apps&kind=Deployment&namespace=shop&name=api&limit=20'
     );
+    expect(uiLink('javascript:alert(1)', ref)).toBeUndefined();
     expect(uiLink('https://mnemo.example.com/', ref)).toBe(
       'https://mnemo.example.com/?cluster=prod&group=apps&kind=Deployment&namespace=shop&name=api'
     );

@@ -39,16 +39,19 @@ export function pickHub(services: Service[]): Service | undefined {
   );
 }
 
-/** matchCluster is the mnemo cluster recorded with this kube-system UID, else by name. */
+/**
+ * matchCluster is the mnemo cluster recorded with this kube-system UID. Only if the UID
+ * couldn't be read does it go by name: another cluster can have the same name.
+ */
 export function matchCluster(
   clusters: { name: string; uid: string }[],
   uid: string | undefined,
   headlampName: string | null
 ): string | undefined {
-  return (
-    clusters.find(c => uid && c.uid === uid)?.name ??
-    clusters.find(c => headlampName && c.name === headlampName)?.name
-  );
+  if (uid) {
+    return clusters.find(c => c.uid === uid)?.name;
+  }
+  return clusters.find(c => headlampName && c.name === headlampName)?.name;
 }
 
 /** historyPath is the hub API path for ref's versions. */
@@ -57,7 +60,10 @@ export function historyPath(ref: Ref, limit = 20): string {
   return `/api/v1/history?${q}`;
 }
 
-/** uiLink opens ref in mnemo's UI, as webhook links do. */
-export function uiLink(uiURL: string, ref: Ref): string {
+/** uiLink opens ref in mnemo's UI, as webhook links do; undefined unless uiURL is http(s). */
+export function uiLink(uiURL: string, ref: Ref): string | undefined {
+  if (!/^https?:\/\//i.test(uiURL)) {
+    return undefined;
+  }
   return `${uiURL.replace(/\/$/, '')}/?${new URLSearchParams({ ...ref })}`;
 }
