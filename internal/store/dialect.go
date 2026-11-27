@@ -90,8 +90,8 @@ func rebind(pg bool, q string) string {
 }
 
 // greatest is the two-argument maximum: max() in SQLite, greatest() in PostgreSQL.
-func (d db) greatest() string {
-	if d.pg {
+func greatest(pg bool) string {
+	if pg {
 		return "greatest"
 	}
 	return "max"
