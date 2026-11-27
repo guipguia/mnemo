@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -20,6 +22,49 @@ func (s *Store) Write(ctx context.Context, f func(*Writer) error) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// SetSession makes session the cluster's current agent run: batches from any other run are
+// stale from now on (see Fresh). An agent calls it once, when it starts.
+func (w *Writer) SetSession(ctx context.Context, cluster, session string) error {
+	_, err := w.tx.ExecContext(ctx, `INSERT INTO streams (cluster, stream, session, seq) VALUES (?, '', ?, 0)
+		ON CONFLICT (cluster, stream) DO UPDATE SET session = excluded.session`, cluster, session)
+	return err
+}
+
+// Fresh reports whether batch seq of stream, from agent run session, comes after everything
+// stored for that stream, and if so records it. A stale batch (an older one, a resend of one
+// already stored, or one from an agent run that has since been replaced) must be dropped:
+// applying it would store old versions as new ones and move checkpoints back. It runs in the
+// batch's own transaction, so checking and storing are atomic. Batches without a session
+// (agents from before sessions) or a stream are always fresh.
+func (w *Writer) Fresh(ctx context.Context, cluster, session, stream string, seq int64) (bool, error) {
+	if session == "" {
+		return true, nil
+	}
+	var current string
+	err := w.tx.QueryRowContext(ctx, "SELECT session FROM streams WHERE cluster = ? AND stream = ''", cluster).Scan(&current)
+	if err == nil && current != session {
+		return false, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if stream == "" {
+		return true, nil
+	}
+	var last int64
+	var lastSession string
+	err = w.tx.QueryRowContext(ctx, "SELECT session, seq FROM streams WHERE cluster = ? AND stream = ?", cluster, stream).Scan(&lastSession, &last)
+	if err == nil && lastSession == session && seq <= last {
+		return false, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	_, err = w.tx.ExecContext(ctx, `INSERT INTO streams (cluster, stream, session, seq) VALUES (?, ?, ?, ?)
+		ON CONFLICT (cluster, stream) DO UPDATE SET session = excluded.session, seq = excluded.seq`, cluster, stream, session, seq)
+	return err == nil, err
 }
 
 // The Store methods below each write in a transaction of their own.

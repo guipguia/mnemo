@@ -134,10 +134,10 @@ func TestHandler(t *testing.T) {
 	}
 
 	c1 := NewClient(srv.URL, "secret", nil)
-	if cp, err := c1.Resume(t.Context(), "prod", "uid-1"); err != nil || cp["v1/configmaps"] != "42" {
+	if cp, err := c1.Resume(t.Context(), "prod", "uid-1", ""); err != nil || cp["v1/configmaps"] != "42" {
 		t.Fatalf("resume: %v, %v", cp, err)
 	}
-	if _, err := c1.Resume(t.Context(), "prod", "uid-2"); err == nil {
+	if _, err := c1.Resume(t.Context(), "prod", "uid-2", ""); err == nil {
 		t.Fatal("resume with another cluster's name must fail")
 	}
 	batch.ClusterUID = "uid-1"
@@ -202,5 +202,51 @@ func TestIngestAudit(t *testing.T) {
 		if got[k] != want {
 			t.Errorf("%s = %q, want %q", k, got[k], want)
 		}
+	}
+}
+
+// A slow original push that finishes after its retry and a later batch must not store its
+// old version as new, nor move the checkpoint back; and a batch is stored whole or not at all.
+func TestIngestOrder(t *testing.T) {
+	ctx := t.Context()
+	st, err := store.Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := Resume(ctx, st, "prod", "u", "run1"); err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Now()
+	batch := func(seq int64, timeout string) Batch {
+		return Batch{Cluster: "prod", ClusterUID: "u", Session: "run1", Stream: "v1/configmaps", Seq: seq,
+			Items: []Item{{Change: store.Change{Ref: store.Ref{Kind: "ConfigMap", Namespace: "n", Name: "app"},
+				Time: t0.Add(time.Duration(seq) * time.Second), Object: json.RawMessage(`{"data":{"timeout":"` + timeout + `"}}`)}}},
+			Checkpoints: map[string]string{"v1/configmaps": fmt.Sprint(100 * seq)}}
+	}
+	for _, b := range []Batch{batch(1, "30s"), batch(2, "3s"), batch(1, "30s")} { // the last: batch 1, late
+		if err := Ingest(ctx, st, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h, _ := st.History(ctx, store.Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: "n", Name: "app"}, 10)
+	if len(h) != 2 {
+		t.Errorf("%d versions, want 2: the late batch was stored as a new version", len(h))
+	}
+	if cp, _ := st.Checkpoints(ctx, "prod"); cp["v1/configmaps"] != "200" {
+		t.Errorf("checkpoint %q, want 200: it moved back", cp["v1/configmaps"])
+	}
+
+	// All or nothing: the second item is invalid, so the first isn't stored either.
+	bad := batch(3, "1s")
+	bad.Items = append(bad.Items, Item{Change: store.Change{Ref: store.Ref{Kind: "ConfigMap", Name: "no-time"}}})
+	if err := Ingest(ctx, st, bad); err == nil {
+		t.Fatal("invalid batch accepted")
+	}
+	if h, _ := st.History(ctx, store.Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: "n", Name: "app"}, 10); len(h) != 2 {
+		t.Errorf("%d versions after a failed batch, want 2", len(h))
+	}
+	if cp, _ := st.Checkpoints(ctx, "prod"); cp["v1/configmaps"] != "200" {
+		t.Errorf("checkpoint %q after a failed batch, want 200", cp["v1/configmaps"])
 	}
 }

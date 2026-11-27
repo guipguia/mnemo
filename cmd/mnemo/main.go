@@ -158,8 +158,8 @@ func run(ctx context.Context, mode string, args []string) error {
 			AuditAddr: *auditListen, AuditToken: *auditToken, AuditCert: *auditCert, AuditKey: *auditKey}
 		if st != nil {
 			ag.Push = func(ctx context.Context, b hub.Batch) error { return hub.Ingest(ctx, st, b) }
-			ag.Resume = func(ctx context.Context, cluster, uid string) (map[string]string, error) {
-				return hub.Resume(ctx, st, cluster, uid)
+			ag.Resume = func(ctx context.Context, cluster, uid, session string) (map[string]string, error) {
+				return hub.Resume(ctx, st, cluster, uid, session)
 			}
 		} else {
 			if *hubURL == "" || *token == "" {

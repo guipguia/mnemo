@@ -83,6 +83,13 @@ CREATE TABLE IF NOT EXISTS webhook_cursors (
 	name    TEXT PRIMARY KEY,
 	last_id INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS streams (
+	cluster TEXT    NOT NULL,
+	stream  TEXT    NOT NULL, -- "": the cluster's current agent session
+	session TEXT    NOT NULL,
+	seq     INTEGER NOT NULL,
+	PRIMARY KEY (cluster, stream)
+);
 CREATE TABLE IF NOT EXISTS checkpoints (
 	cluster          TEXT NOT NULL,
 	resource         TEXT NOT NULL,

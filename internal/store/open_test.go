@@ -124,3 +124,48 @@ func TestEventWithNUL(t *testing.T) {
 		t.Fatal(err) // PostgreSQL rejects NUL in text: one bad event must not stall the batch
 	}
 }
+
+func TestFresh(t *testing.T) {
+	ctx := t.Context()
+	s, err := openTest(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	fresh := func(session, stream string, seq int64) bool {
+		t.Helper()
+		var ok bool
+		if err := s.Write(ctx, func(w *Writer) (err error) { ok, err = w.Fresh(ctx, "prod", session, stream, seq); return }); err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	setSession := func(session string) {
+		if err := s.Write(ctx, func(w *Writer) error { return w.SetSession(ctx, "prod", session) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setSession("run1")
+	for i, tc := range []struct {
+		session, stream string
+		seq             int64
+		want            bool
+	}{
+		{"", "", 0, true}, // an agent from before sessions
+		{"run1", "v1/configmaps", 1, true},
+		{"run1", "v1/configmaps", 1, false},      // a resend of one stored
+		{"run1", "v1/configmaps", 3, true},       // gaps are fine
+		{"run1", "v1/configmaps", 2, false},      // older than one stored
+		{"run1", "apps/v1/deployments", 1, true}, // streams are independent
+		{"run1", "", 0, true},                    // unordered
+		{"run0", "v1/configmaps", 9, false},      // an earlier run
+	} {
+		if got := fresh(tc.session, tc.stream, tc.seq); got != tc.want {
+			t.Errorf("%d %+v: fresh = %v", i, tc, got)
+		}
+	}
+	setSession("run2") // the agent restarted
+	if !fresh("run2", "v1/configmaps", 1) || fresh("run1", "v1/configmaps", 4) {
+		t.Error("a new run starts its numbering over, and the old run's batches are stale")
+	}
+}

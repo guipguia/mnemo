@@ -33,9 +33,9 @@ func (c *Client) Push(ctx context.Context, b Batch) error {
 	return c.do(ctx, "POST", "/api/v1/ingest", bytes.NewReader(body), nil)
 }
 
-func (c *Client) Resume(ctx context.Context, cluster, uid string) (map[string]string, error) {
+func (c *Client) Resume(ctx context.Context, cluster, uid, session string) (map[string]string, error) {
 	var cp map[string]string
-	q := url.Values{"cluster": {cluster}, "uid": {uid}}
+	q := url.Values{"cluster": {cluster}, "uid": {uid}, "session": {session}}
 	return cp, c.do(ctx, "GET", "/api/v1/checkpoints?"+q.Encode(), nil, &cp)
 }
 

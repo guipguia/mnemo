@@ -62,6 +62,10 @@ for its per-GVK resume `resourceVersion`, so the agent keeps no local state.
   diffs, attributes, and stores. This keeps the agent stateless and makes at-least-once
   delivery safe (a resent object is a no-op).
 - Resume from the checkpoint held by the hub.
+- Each batch is stored in one transaction, all or nothing. An agent run has a session and
+  numbers each watch stream's batches; the hub drops a batch older than one it already
+  stored (a slow original finishing after its retry) or from a replaced run, which would
+  otherwise store old versions as new ones and move the checkpoint back.
 - Short outages need nothing special: the watch resumes from the checkpoint and replays what
   was missed, with normal attribution.
 - `410 Gone` (hub or agent down past the etcd compaction window): relist, compare against the

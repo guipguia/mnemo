@@ -75,8 +75,8 @@ func newHarness(t *testing.T) *harness {
 	h.agent = &Agent{
 		Client: client, Cluster: "test", Resources: []schema.GroupVersionResource{configmaps},
 		Push: func(ctx context.Context, b hub.Batch) error { return hub.Ingest(ctx, st, b) },
-		Resume: func(ctx context.Context, c, uid string) (map[string]string, error) {
-			return hub.Resume(ctx, st, c, uid)
+		Resume: func(ctx context.Context, c, uid, session string) (map[string]string, error) {
+			return hub.Resume(ctx, st, c, uid, session)
 		},
 	}
 	return h
@@ -236,7 +236,7 @@ func TestWatchLoop(t *testing.T) {
 func TestResumesFromHubCheckpoint(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	if _, err := hub.Resume(ctx, h.st, "test", "kube-system-uid"); err != nil {
+	if _, err := hub.Resume(ctx, h.st, "test", "kube-system-uid", ""); err != nil {
 		t.Fatal(err)
 	}
 	h.st.SetCheckpoint(ctx, "test", "v1/configmaps", "500")
@@ -252,11 +252,11 @@ func TestResumesFromHubCheckpoint(t *testing.T) {
 
 func TestRefusesClusterNameOfAnotherCluster(t *testing.T) {
 	h := newHarness(t)
-	if _, err := hub.Resume(context.Background(), h.st, "test", "some-other-cluster-uid"); err != nil {
+	if _, err := hub.Resume(context.Background(), h.st, "test", "some-other-cluster-uid", ""); err != nil {
 		t.Fatal(err)
 	}
-	h.agent.Resume = func(ctx context.Context, c, uid string) (map[string]string, error) {
-		return hub.Resume(ctx, h.st, c, uid)
+	h.agent.Resume = func(ctx context.Context, c, uid, session string) (map[string]string, error) {
+		return hub.Resume(ctx, h.st, c, uid, session)
 	}
 	stop := h.run()
 	defer stop()
@@ -314,7 +314,7 @@ func TestHeartbeat(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	h.st.SetCheckpoint(ctx, "test", "v1/configmaps", "500") // resume: no list needed
-	hub.Resume(ctx, h.st, "test", "kube-system-uid")
+	hub.Resume(ctx, h.st, "test", "kube-system-uid", "")
 	stop := h.run()
 	defer stop()
 	h.nextWatch("500")
