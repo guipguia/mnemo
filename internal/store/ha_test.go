@@ -134,6 +134,7 @@ func TestLeader(t *testing.T) {
 	c, d := twoHubs(t)
 	stopC := run(c, "c")
 	defer stopC()
+	b.lockDB.Close() // a dead node doesn't come back: b keeps its held connection, but can't reconnect
 	if _, err := d.db.ExecContext(t.Context(), `SELECT pg_terminate_backend(pid) FROM pg_locks
 		WHERE locktype = 'advisory' AND granted AND pid != pg_backend_pid()`); err != nil {
 		t.Fatal(err)

@@ -40,7 +40,7 @@ Design details: [docs/design.md](docs/design.md).
 - [ ] OpenTelemetry traces
 - [x] MCP server for AI incident agents ([docs/mcp.md](docs/mcp.md))
 - [ ] Headlamp plugin
-- [ ] Published scale and resource benchmarks
+- [x] Published scale and resource benchmarks ([docs/benchmarks.md](docs/benchmarks.md); agent resource use still to measure)
 
 ## Later
 - [ ] Cloud audit log readers (EKS, GKE, AKS) for attribution on managed clusters

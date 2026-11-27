@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS changes (
 	paths            TEXT,
 	object           BLOB
 );
+CREATE INDEX IF NOT EXISTS changes_ts           ON changes (ts, id); -- the feed across clusters, newest first
 CREATE INDEX IF NOT EXISTS changes_cluster_ts   ON changes (cluster, ts);
 CREATE INDEX IF NOT EXISTS changes_namespace_ts ON changes (cluster, namespace, ts);
 CREATE INDEX IF NOT EXISTS changes_object       ON changes (cluster, api_group, kind, namespace, name, ts);

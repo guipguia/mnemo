@@ -17,7 +17,7 @@ import (
 func openTest(t *testing.T) (*Store, error) { return Open(testDSN(t)) }
 
 // testDSN is a fresh database: a SQLite path, or a new schema in $MNEMO_TEST_POSTGRES.
-func testDSN(t *testing.T) string {
+func testDSN(t testing.TB) string {
 	dsn := os.Getenv("MNEMO_TEST_POSTGRES")
 	if dsn == "" {
 		return filepath.Join(t.TempDir(), "mnemo.db")
