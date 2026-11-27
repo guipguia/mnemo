@@ -112,7 +112,11 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
+		r2 := r.WithContext(context.WithValue(r.Context(), ctxKey{}, u))
+		next.ServeHTTP(w, r2)
+		if r2.Pattern != "" {
+			r.Pattern = r2.Pattern // the inner route, for whoever wraps this (tracing names spans by it)
+		}
 	})
 }
 

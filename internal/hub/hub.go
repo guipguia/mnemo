@@ -100,7 +100,7 @@ func Ingest(ctx context.Context, s *store.Store, b Batch) error {
 	if err != nil && ctx.Err() == nil {
 		IngestFailures.Add(1)
 	}
-	if err != nil {
+	if err != nil && ctx.Err() == nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 	}

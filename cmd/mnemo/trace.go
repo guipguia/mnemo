@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,25 +26,38 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 )
 
+// tracingOn is set by tracing: off, servers aren't wrapped at all.
+var tracingOn bool
+
 // tracing exports OpenTelemetry traces over OTLP/HTTP when the standard
-// OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT is set; otherwise it's
-// a no-op. The SDK reads OTEL_TRACES_SAMPLER, OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES.
+// OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT is set, unless
+// OTEL_SDK_DISABLED=true or OTEL_TRACES_EXPORTER=none; otherwise it's a no-op. The SDK
+// reads OTEL_TRACES_SAMPLER, OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES.
 func tracing(ctx context.Context, mode string) (shutdown func(context.Context) error, err error) {
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
 	if base := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); endpoint == "" && base != "" {
 		endpoint = strings.TrimSuffix(base, "/") + "/v1/traces"
 	}
-	if endpoint == "" {
+	if endpoint == "" || strings.EqualFold(os.Getenv("OTEL_SDK_DISABLED"), "true") || os.Getenv("OTEL_TRACES_EXPORTER") == "none" {
 		return func(context.Context) error { return nil }, nil
 	}
-	headers, err := otlpHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS") + "," + os.Getenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS"))
-	if err != nil {
-		return nil, err
+	for _, v := range []string{"OTEL_EXPORTER_OTLP_PROTOCOL", "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"} {
+		if p := os.Getenv(v); p != "" && p != "http/json" {
+			slog.Warn("mnemo exports traces as OTLP/HTTP JSON only; ignoring", "var", v, "value", p)
+		}
+	}
+	headers := http.Header{}
+	for _, v := range []string{"OTEL_EXPORTER_OTLP_HEADERS", "OTEL_EXPORTER_OTLP_TRACES_HEADERS"} { // later wins
+		if err := otlpHeaders(headers, os.Getenv(v)); err != nil {
+			return nil, fmt.Errorf("%s: %w", v, err)
+		}
 	}
 	res, err := resource.New(ctx, resource.WithTelemetrySDK(),
 		resource.WithAttributes(semconv.ServiceName("mnemo"), semconv.ServiceVersion(version), attribute.String("mnemo.mode", mode)),
 		resource.WithFromEnv()) // last: OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES win
-	if err != nil {
+	if errors.Is(err, resource.ErrPartialResource) {
+		slog.Warn("tracing: some resource attributes were ignored", "err", err) // a typo mustn't stop the hub
+	} else if err != nil {
 		return nil, err
 	}
 	exp := &otlpExporter{url: endpoint, headers: headers, client: &http.Client{Timeout: 10 * time.Second}}
@@ -50,36 +65,43 @@ func tracing(ctx context.Context, mode string) (shutdown func(context.Context) e
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) { slog.Warn("tracing", "err", err) }))
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+	tracingOn = true
 	return tp.Shutdown, nil
 }
 
-// traced makes a server span per request, named by its route.
+// traced makes a server span per request, named by its route. Only agent pushes continue
+// the caller's trace: anyone else could pick trace IDs or force sampling, so their
+// traceparent becomes a link from a new trace.
 func traced(h http.Handler) http.Handler {
-	return otelhttp.NewHandler(h, "mnemo", otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
-		if r.Pattern != "" {
-			return r.Pattern
-		}
-		return r.Method
-	}))
+	if !tracingOn {
+		return h
+	}
+	return otelhttp.NewHandler(h, "mnemo",
+		otelhttp.WithPublicEndpointFn(func(r *http.Request) bool { return r.URL.Path != "/api/v1/ingest" }),
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			if r.Pattern != "" {
+				return r.Pattern
+			}
+			return r.Method
+		}))
 }
 
-// otlpHeaders parses "k=v,k2=v2" with URL-encoded values, as OTEL_EXPORTER_OTLP_HEADERS.
-// Later entries win, so the traces-specific variable goes last.
-func otlpHeaders(s string) (http.Header, error) {
-	h := http.Header{}
-	for entry := range strings.SplitSeq(s, ",") {
+// otlpHeaders adds "k=v,k2=v2", values percent-encoded (W3C Baggage: + stays +), to h.
+// Errors never echo an entry: it's often a token.
+func otlpHeaders(h http.Header, s string) error {
+	for i, entry := range strings.Split(s, ",") {
 		if strings.TrimSpace(entry) == "" {
 			continue
 		}
 		k, v, ok := strings.Cut(entry, "=")
 		k = strings.TrimSpace(k)
-		val, err := url.QueryUnescape(strings.TrimSpace(v))
+		val, err := url.PathUnescape(strings.TrimSpace(v))
 		if !ok || err != nil || k == "" {
-			return nil, fmt.Errorf("OTEL_EXPORTER_OTLP_HEADERS: bad entry for %q: want key=value", k) // never echo the value: it's often a token
+			return fmt.Errorf("entry %d: want key=value, value percent-encoded", i+1)
 		}
 		h.Set(k, val)
 	}
-	return h, nil
+	return nil
 }
 
 // otlpExporter posts spans as OTLP/HTTP JSON, which every OTLP receiver accepts. The
@@ -109,7 +131,7 @@ func (e *otlpExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnl
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("OTLP export to %s: %s: %s", e.url, resp.Status, bytes.TrimSpace(msg))
+		return fmt.Errorf("OTLP export: %s: %s", resp.Status, bytes.TrimSpace(msg))
 	}
 	return nil
 }
@@ -144,6 +166,23 @@ func otlpTraces(spans []sdktrace.ReadOnlySpan) kv {
 		}
 		if p := s.Parent(); p.IsValid() {
 			span["parentSpanId"] = p.SpanID().String()
+		}
+		if ts := s.SpanContext().TraceState().String(); ts != "" {
+			span["traceState"] = ts
+		}
+		var links []kv
+		for _, l := range s.Links() {
+			links = append(links, kv{"traceId": l.SpanContext.TraceID().String(), "spanId": l.SpanContext.SpanID().String(),
+				"attributes": otlpAttrs(l.Attributes)})
+		}
+		if links != nil {
+			span["links"] = links
+		}
+		for k, n := range map[string]int{"droppedAttributesCount": s.DroppedAttributes(),
+			"droppedEventsCount": s.DroppedEvents(), "droppedLinksCount": s.DroppedLinks()} {
+			if n > 0 {
+				span[k] = n
+			}
 		}
 		var events []kv
 		for _, ev := range s.Events() {
@@ -193,6 +232,9 @@ func otlpValue(v attribute.Value) kv {
 	case attribute.INT64:
 		return kv{"intValue": strconv.FormatInt(v.AsInt64(), 10)}
 	case attribute.FLOAT64:
+		if f := v.AsFloat64(); math.IsNaN(f) || math.IsInf(f, 0) {
+			return kv{"stringValue": v.Emit()} // JSON has no NaN or Inf
+		}
 		return kv{"doubleValue": v.AsFloat64()}
 	case attribute.STRING:
 		return kv{"stringValue": v.AsString()}
