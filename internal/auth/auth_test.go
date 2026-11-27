@@ -213,6 +213,9 @@ func TestOIDCLogin(t *testing.T) {
 	if w := do("/?cluster=prod"); w.Code != 302 || !strings.HasPrefix(w.Header().Get("Location"), "/auth/login?rd=") {
 		t.Fatalf("browser without session: %d %s", w.Code, w.Header().Get("Location"))
 	}
+	if w := do("/mcp"); w.Code != 401 {
+		t.Fatalf("/mcp without session: %d", w.Code)
+	}
 	if w := do("/auth/me"); w.Code != 401 {
 		t.Fatalf("/auth/me without session: %d", w.Code)
 	}
