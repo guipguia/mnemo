@@ -70,6 +70,7 @@ type Agent struct {
 
 	uid     string
 	session string // this run: the hub drops batches from earlier runs
+	stop    context.CancelCauseFunc
 
 	mu  sync.Mutex
 	seq map[string]int64 // last batch number per stream (watched resource)
@@ -84,6 +85,17 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	a.uid = string(ns.GetUID())
 	a.session = rand.Text()
+	ctx, a.stop = context.WithCancelCause(ctx)
+	defer a.stop(nil)
+
+	// Listen before taking over the cluster at Resume: a pod that can't serve shouldn't
+	// replace a working agent.
+	var audit net.Listener
+	if a.AuditAddr != "" {
+		if audit, err = net.Listen("tcp", a.AuditAddr); err != nil {
+			return fmt.Errorf("audit webhook: %w", err)
+		}
+	}
 
 	var cps map[string]string
 	if err := retry(ctx, "resume", func() (err error) {
@@ -92,13 +104,8 @@ func (a *Agent) Run(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	if a.AuditAddr != "" {
-		// Listen only now: forwarded audit events need the cluster UID.
-		l, err := net.Listen("tcp", a.AuditAddr)
-		if err != nil {
-			return fmt.Errorf("audit webhook: %w", err)
-		}
-		go a.serveAudit(ctx, l)
+	if audit != nil {
+		go a.serveAudit(ctx, audit) // only now: forwarded audit events need the session's UID
 	}
 	slog.Info("agent started", "cluster", a.Cluster, "uid", a.uid, "resources", len(a.Resources), "audit", a.AuditAddr)
 
@@ -108,7 +115,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	wg.Go(func() { a.heartbeat(ctx) })
 	wg.Wait()
-	return ctx.Err()
+	return context.Cause(ctx)
 }
 
 // watch resumes from rv, relisting whenever there is no usable resume point.
@@ -267,13 +274,17 @@ func (a *Agent) push(ctx context.Context, stream string, b hub.Batch) error {
 	b.Seq = a.seq[stream]
 	a.mu.Unlock()
 	b.Cluster, b.ClusterUID, b.Session, b.Stream = a.Cluster, a.uid, a.session, stream
-	return retry(ctx, "push", func() error { return a.Push(ctx, b) })
+	err := retry(ctx, "push", func() error { return a.Push(ctx, b) })
+	if errors.Is(err, store.ErrSuperseded) && a.stop != nil {
+		a.stop(err) // every watch ends, and Run returns err
+	}
+	return err
 }
 
 func retry(ctx context.Context, what string, f func() error) error {
 	for backoff := time.Second; ; backoff = min(2*backoff, time.Minute) {
 		err := f()
-		if err == nil || ctx.Err() != nil {
+		if err == nil || ctx.Err() != nil || errors.Is(err, store.ErrSuperseded) { // retrying can't fix that
 			return err
 		}
 		slog.Warn(what+" failed, retrying", "err", err, "in", backoff)

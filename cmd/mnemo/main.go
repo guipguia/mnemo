@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -132,6 +133,9 @@ func run(ctx context.Context, mode string, args []string) error {
 			gvr, err := agent.ParseResource(strings.TrimSpace(r))
 			if err != nil {
 				return err
+			}
+			if slices.Contains(gvrs, gvr) { // two watches of one resource would share its batch numbering
+				return fmt.Errorf("--resources lists %s twice", r)
 			}
 			gvrs = append(gvrs, gvr)
 		}

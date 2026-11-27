@@ -330,3 +330,26 @@ func TestHeartbeat(t *testing.T) {
 		}
 	}
 }
+
+// Another agent run for the cluster took over: this one's next push is refused, and it stops
+// with that reason rather than carrying on and silently writing nothing.
+func TestStopsWhenSuperseded(t *testing.T) {
+	h := newHarness(t)
+	h.lists <- list("100", cm("a", "90", "kubectl-create", map[string]any{"K": "1"}))
+	done := make(chan error, 1)
+	go func() { done <- h.agent.Run(t.Context()) }()
+	w := h.nextWatch("100")
+	if _, err := hub.Resume(t.Context(), h.st, "test", "kube-system-uid", "a-newer-run"); err != nil {
+		t.Fatal(err)
+	}
+	w.Modify(cm("a", "101", "kubectl-patch", map[string]any{"K": "2"}))
+	select {
+	case err := <-done:
+		if !errors.Is(err, store.ErrSuperseded) {
+			t.Fatalf("Run = %v, want ErrSuperseded", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("agent kept running after being superseded")
+	}
+	h.wantHistory("a", "baseline:kubectl-create") // the refused change isn't stored
+}

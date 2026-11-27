@@ -105,6 +105,9 @@ var (
 	ErrNotFound = errors.New("not found")
 	// ErrClusterConflict means a cluster name is already registered with a different UID.
 	ErrClusterConflict = errors.New("cluster name already registered with a different UID")
+	// ErrSuperseded means another agent run for the cluster has started since this one: its
+	// batches are refused, and it must stop (or restart, to take over again).
+	ErrSuperseded = errors.New("another agent for this cluster has started since this one; stopping")
 )
 
 type Type string

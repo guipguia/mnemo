@@ -33,9 +33,10 @@ func (w *Writer) SetSession(ctx context.Context, cluster, session string) error 
 }
 
 // Fresh reports whether batch seq of stream, from agent run session, comes after everything
-// stored for that stream, and if so records it. A stale batch (an older one, a resend of one
-// already stored, or one from an agent run that has since been replaced) must be dropped:
-// applying it would store old versions as new ones and move checkpoints back. It runs in the
+// stored for that stream, and if so records it. A stale batch (an older one, or a resend of
+// one already stored) must be dropped: applying it would store old versions as new ones and
+// move checkpoints back. A batch from an agent run that has since been replaced fails with
+// ErrSuperseded, so that agent learns it and stops, rather than silently writing nothing. It runs in the
 // batch's own transaction, so checking and storing are atomic. Batches without a session
 // (agents from before sessions) or a stream are always fresh.
 func (w *Writer) Fresh(ctx context.Context, cluster, session, stream string, seq int64) (bool, error) {
@@ -45,7 +46,7 @@ func (w *Writer) Fresh(ctx context.Context, cluster, session, stream string, seq
 	var current string
 	err := w.tx.QueryRowContext(ctx, "SELECT session FROM streams WHERE cluster = ? AND stream = ''", cluster).Scan(&current)
 	if err == nil && current != session {
-		return false, nil
+		return false, ErrSuperseded
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err

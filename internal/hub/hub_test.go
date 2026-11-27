@@ -3,6 +3,7 @@ package hub
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -248,5 +249,36 @@ func TestIngestOrder(t *testing.T) {
 	}
 	if cp, _ := st.Checkpoints(ctx, "prod"); cp["v1/configmaps"] != "200" {
 		t.Errorf("checkpoint %q after a failed batch, want 200", cp["v1/configmaps"])
+	}
+}
+
+// The session goes over HTTP both ways: Resume sets it, and a replaced run's push gets 410,
+// which the client turns back into ErrSuperseded.
+func TestClientSession(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := httptest.NewServer(Handler(st, "t", func(*http.Request) store.Access { return store.Access{} }))
+	defer srv.Close()
+	c := NewClient(srv.URL, "t", nil)
+	push := func(session string, seq int64) error {
+		return c.Push(t.Context(), Batch{Cluster: "prod", ClusterUID: "u", Session: session, Stream: "s", Seq: seq})
+	}
+	if _, err := c.Resume(t.Context(), "prod", "u", "run1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := push("run1", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Resume(t.Context(), "prod", "u", "run2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := push("run1", 2); !errors.Is(err, store.ErrSuperseded) {
+		t.Errorf("replaced run's push: %v, want ErrSuperseded", err)
+	}
+	if err := push("run2", 1); err != nil {
+		t.Errorf("current run's push: %v", err)
 	}
 }

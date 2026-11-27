@@ -3,6 +3,7 @@ package store
 import (
 	"crypto/rand"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -132,13 +133,20 @@ func TestFresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	fresh := func(session, stream string, seq int64) bool {
+	// fresh is "fresh", "stale", or "superseded".
+	fresh := func(session, stream string, seq int64) string {
 		t.Helper()
 		var ok bool
-		if err := s.Write(ctx, func(w *Writer) (err error) { ok, err = w.Fresh(ctx, "prod", session, stream, seq); return }); err != nil {
+		err := s.Write(ctx, func(w *Writer) (err error) { ok, err = w.Fresh(ctx, "prod", session, stream, seq); return })
+		switch {
+		case errors.Is(err, ErrSuperseded):
+			return "superseded"
+		case err != nil:
 			t.Fatal(err)
+		case ok:
+			return "fresh"
 		}
-		return ok
+		return "stale"
 	}
 	setSession := func(session string) {
 		if err := s.Write(ctx, func(w *Writer) error { return w.SetSession(ctx, "prod", session) }); err != nil {
@@ -149,23 +157,23 @@ func TestFresh(t *testing.T) {
 	for i, tc := range []struct {
 		session, stream string
 		seq             int64
-		want            bool
+		want            string
 	}{
-		{"", "", 0, true}, // an agent from before sessions
-		{"run1", "v1/configmaps", 1, true},
-		{"run1", "v1/configmaps", 1, false},      // a resend of one stored
-		{"run1", "v1/configmaps", 3, true},       // gaps are fine
-		{"run1", "v1/configmaps", 2, false},      // older than one stored
-		{"run1", "apps/v1/deployments", 1, true}, // streams are independent
-		{"run1", "", 0, true},                    // unordered
-		{"run0", "v1/configmaps", 9, false},      // an earlier run
+		{"", "", 0, "fresh"}, // an agent from before sessions
+		{"run1", "v1/configmaps", 1, "fresh"},
+		{"run1", "v1/configmaps", 1, "stale"},       // a resend of one stored
+		{"run1", "v1/configmaps", 3, "fresh"},       // gaps are fine
+		{"run1", "v1/configmaps", 2, "stale"},       // older than one stored
+		{"run1", "apps/v1/deployments", 1, "fresh"}, // streams are independent
+		{"run1", "", 0, "fresh"},                    // unordered
+		{"run0", "v1/configmaps", 9, "superseded"},  // an earlier run
 	} {
 		if got := fresh(tc.session, tc.stream, tc.seq); got != tc.want {
 			t.Errorf("%d %+v: fresh = %v", i, tc, got)
 		}
 	}
 	setSession("run2") // the agent restarted
-	if !fresh("run2", "v1/configmaps", 1) || fresh("run1", "v1/configmaps", 4) {
+	if fresh("run2", "v1/configmaps", 1) != "fresh" || fresh("run1", "v1/configmaps", 4) != "superseded" {
 		t.Error("a new run starts its numbering over, and the old run's batches are stale")
 	}
 }

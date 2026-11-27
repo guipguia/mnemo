@@ -322,6 +322,8 @@ func reply(w http.ResponseWriter) func(any, error) {
 		switch {
 		case errors.Is(err, store.ErrClusterConflict):
 			http.Error(w, err.Error(), http.StatusConflict)
+		case errors.Is(err, store.ErrSuperseded):
+			http.Error(w, err.Error(), http.StatusGone)
 		case errors.Is(err, store.ErrNotFound):
 			http.Error(w, err.Error(), http.StatusNotFound)
 		case err != nil:

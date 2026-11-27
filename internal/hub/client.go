@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/guipguia/mnemo/internal/store"
 )
 
 // Client is how a remote agent talks to the hub.
@@ -51,6 +53,9 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, ou
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusGone {
+		return store.ErrSuperseded
+	}
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return fmt.Errorf("hub %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(msg))
