@@ -21,8 +21,9 @@ cloud audit logs are on the [roadmap](../ROADMAP.md).
   person (not a `system:` identity) is always `manual`, which also flags drift on
   GitOps-managed objects. Deletes, which have no field manager, are classified by the
   client's user agent.
-- Best-effort: if the hub is down when events arrive, or an event arrives before the change
-  it describes, the field manager stays the author.
+- Best-effort: if the hub is down when events arrive, the field manager stays the author.
+  An event that arrives before the change it describes is held for up to 10 minutes and
+  applied when the change is recorded.
 
 ## 1. Install the agent with audit on
 

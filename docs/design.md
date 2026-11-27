@@ -119,7 +119,9 @@ entry instead was wrong in practice: `/scale` entries carry no timestamp, and ti
 Joining audit events to changes: exact match on `responseObject.metadata.resourceVersion`
 requires `RequestResponse` audit level. Recommend it only for watched GVKs (never Secrets).
 Most deletes return a `Status`, matched instead by `details.uid` against the tombstone.
-Audit events trail the watch (webhook batching), so the hub updates the recorded change.
+Audit events usually trail the watch (webhook batching), so the hub updates the recorded
+change. One that comes first (the agent batches watch events for up to 200 ms) is held in
+`held_audits` for up to 10 minutes and applied when the change is recorded.
 No fuzzy match on objectRef + time window: a wrong author is worse than a field manager.
 
 ## Change source: GitOps vs manual
