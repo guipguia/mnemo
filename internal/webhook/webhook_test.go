@@ -207,7 +207,7 @@ func TestPostRefusesRedirects(t *testing.T) {
 	}))
 	defer srv.Close()
 	w := Webhook{Name: "x", URL: srv.URL + "/hook"}
-	if err := w.post(t.Context(), newClient(), []byte(`{}`), 1); err == nil || got != 0 {
+	if err := w.post(t.Context(), newClient(), []byte(`{}`), 1); !errors.Is(err, errRedirected) || got != 0 {
 		t.Errorf("redirected delivery: err %v, %d requests to the target; want a failure and none", err, got)
 	}
 }

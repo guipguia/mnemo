@@ -260,7 +260,7 @@ func (w Webhook) deliver(ctx context.Context, client *http.Client, base string, 
 			return true
 		}
 		level := slog.LevelWarn
-		if errors.Is(err, errRejected) {
+		if errors.Is(err, errRejected) || errors.Is(err, errRedirected) {
 			level = slog.LevelError // won't fix itself: later changes wait until someone acts
 		}
 		log.Log(ctx, level, "delivery failed, retrying", "change", c.ID, "err", err, "in", backoff)
@@ -292,7 +292,7 @@ func (w Webhook) post(ctx context.Context, client *http.Client, body []byte, id 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 == 3 {
-		return fmt.Errorf("%s: redirected; set the webhook's url to where it points", resp.Status) // not the Location: it may hold the secret too
+		return fmt.Errorf("%s: %w", resp.Status, errRedirected) // not the Location: it may hold the secret too
 	}
 	if resp.StatusCode/100 != 2 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
@@ -306,6 +306,9 @@ func (w Webhook) post(ctx context.Context, client *http.Client, body []byte, id 
 
 // errRejected marks a 401/403: a token or permission problem that retrying won't fix.
 var errRejected = errors.New("check the webhook's token and its permissions")
+
+// errRedirected marks a 3xx: the url is out of date, which retrying won't fix either.
+var errRedirected = errors.New("redirected; set the webhook's url to where it points")
 
 // Sign is the hex HMAC-SHA256 of body: receivers compare it to X-Mnemo-Signature
 // (after "sha256=") in constant time.
