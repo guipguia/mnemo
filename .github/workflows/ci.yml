@@ -47,7 +47,8 @@ jobs:
       - run: npm run lint
       - run: npm run tsc
       - run: npm test
-      - run: npm run package  # builds, as the release does
+      - run: npm run build
+      - run: npm run package  # as the release does
   chart:
     runs-on: ubuntu-latest
     steps:

@@ -31,6 +31,7 @@ jobs:
         run: |
           npm ci
           npm version --no-git-tag-version --allow-same-version "${VERSION#v}"
+          npm run build  # package only archives dist/
           npm run package
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: {name: headlamp, path: "headlamp/mnemo-headlamp-*.tar.gz", if-no-files-found: error}
