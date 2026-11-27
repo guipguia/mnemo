@@ -44,7 +44,8 @@ const usage = `usage: kubectl mnemo COMMAND [flags]
 Times are RFC 3339 or a duration ago: 2026-10-20T14:32:00Z, 2h. See docs/kubectl-plugin.md.
 `
 
-// errDiffers makes the exit code 1 when objects differ, like diff and kubectl diff.
+// errDiffers makes the exit code 1 when objects differ, like diff and kubectl diff; other
+// errors exit 2, so scripts can tell drift from trouble.
 var errDiffers = errors.New("objects differ")
 
 func main() {
@@ -54,7 +55,7 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		os.Exit(2)
 	}
 }
 
@@ -128,12 +129,19 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		}
 		pos = append(pos, fs.Arg(0))
 	}
-	fs.Visit(func(f *flag.Flag) { o.groupSet = o.groupSet || f.Name == "group" })
+	clusterSet := false
+	fs.Visit(func(f *flag.Flag) {
+		o.groupSet = o.groupSet || f.Name == "group"
+		clusterSet = clusterSet || f.Name == "cluster"
+	})
+	if cmd == "changes" && !clusterSet {
+		o.cluster = "" // $MNEMO_CLUSTER names the object's cluster; the feed defaults to all
+	}
 	if o.hub == "" {
 		return errors.New("--hub or $MNEMO_HUB is required")
 	}
 	if h := os.Getenv("MNEMO_HEADER"); h != "" {
-		o.headers = append(o.headers, h)
+		o.headers = append(headers{h}, o.headers...) // first, so --header wins
 	}
 	c := client{base: strings.TrimSuffix(o.hub, "/"), headers: o.headers}
 	now := time.Now()
@@ -219,6 +227,26 @@ func resolve(arg string, o options) (ref, error) {
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	rules.ExplicitPath = o.kubeconfig
 	kc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{CurrentContext: o.context})
+	return resolveIn(r, o, kc, func() (meta.RESTMapper, error) {
+		cfg, err := kc.ClientConfig()
+		if err != nil {
+			return nil, err
+		}
+		dc, err := discovery.NewDiscoveryClientForConfig(cfg)
+		if err != nil {
+			return nil, err
+		}
+		groups, err := restmapper.GetAPIGroupResources(dc)
+		if err != nil {
+			return nil, fmt.Errorf("resolving %q needs the cluster (use --group to skip): %w", r.kind, err)
+		}
+		return restmapper.NewShortcutExpander(restmapper.NewDiscoveryRESTMapper(groups), dc, nil), nil
+	})
+}
+
+// resolveIn fills in r's cluster, group, kind and namespace from the kubeconfig and the
+// cluster's kinds. Split from resolve so tests can pass both in.
+func resolveIn(r ref, o options, kc clientcmd.ClientConfig, newMapper func() (meta.RESTMapper, error)) (ref, error) {
 	if r.cluster == "" {
 		raw, err := kc.RawConfig()
 		if err != nil {
@@ -231,22 +259,14 @@ func resolve(arg string, o options) (ref, error) {
 			return ref{}, errors.New("--cluster, $MNEMO_CLUSTER, or a kubeconfig context is required")
 		}
 	}
-	cfg, err := kc.ClientConfig()
+	mapper, err := newMapper()
 	if err != nil {
 		return ref{}, err
 	}
-	dc, err := discovery.NewDiscoveryClientForConfig(cfg)
+	// "deploy.apps" names the group too, as in kubectl.
+	gvk, err := mapper.KindFor(schema.ParseGroupResource(strings.ToLower(r.kind)).WithVersion(""))
 	if err != nil {
-		return ref{}, err
-	}
-	groups, err := restmapper.GetAPIGroupResources(dc)
-	if err != nil {
-		return ref{}, fmt.Errorf("resolving %q needs the cluster (use --group to skip): %w", kind, err)
-	}
-	mapper := restmapper.NewShortcutExpander(restmapper.NewDiscoveryRESTMapper(groups), dc, nil)
-	gvk, err := mapper.KindFor(schema.GroupVersionResource{Resource: strings.ToLower(kind)})
-	if err != nil {
-		return ref{}, fmt.Errorf("unknown kind %q (use --group to name a kind the cluster no longer has): %w", kind, err)
+		return ref{}, fmt.Errorf("unknown kind %q (use --group to name a kind the cluster no longer has): %w", r.kind, err)
 	}
 	m, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	if err != nil {
@@ -321,7 +341,7 @@ func changes(ctx context.Context, c client, o options, now time.Time, out io.Wri
 			return err
 		}
 		if !t.IsZero() {
-			q.Set(k, t.Format(time.RFC3339))
+			q.Set(k, t.Format(time.RFC3339Nano))
 		}
 	}
 	var list []change
@@ -417,7 +437,7 @@ var errNotFound = errors.New("not found")
 func (c client) at(ctx context.Context, r ref, t time.Time) (string, error) {
 	q := r.query()
 	if !t.IsZero() {
-		q.Set("time", t.Format(time.RFC3339))
+		q.Set("time", t.Format(time.RFC3339Nano))
 	}
 	var v struct {
 		Object json.RawMessage `json:"object"`
@@ -439,11 +459,13 @@ func (c client) get(ctx context.Context, path string, q url.Values, out any) err
 	for _, h := range c.headers {
 		k, v, ok := strings.Cut(h, ":")
 		if !ok {
-			return fmt.Errorf("header %q: want \"Name: value\"", k)
+			// Not the header itself: it's usually a credential.
+			return fmt.Errorf("a header (%d characters) has no colon: want \"Name: value\"", len(h))
 		}
 		req.Header.Set(strings.TrimSpace(k), strings.TrimSpace(v))
 	}
-	client := &http.Client{Timeout: time.Minute}
+	// No redirects: a logged-out auth proxy redirects to an HTML login page.
+	client := &http.Client{Timeout: time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -454,7 +476,7 @@ func (c client) get(ctx context.Context, path string, q url.Values, out any) err
 		return json.NewDecoder(resp.Body).Decode(out)
 	case http.StatusNotFound:
 		return errNotFound
-	case http.StatusUnauthorized:
+	case http.StatusUnauthorized, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect:
 		return errors.New("hub: not logged in; pass credentials with --header, see docs/kubectl-plugin.md")
 	}
 	msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))

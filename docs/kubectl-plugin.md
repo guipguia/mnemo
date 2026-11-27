@@ -24,7 +24,7 @@ kubectl mnemo diff deploy/api --at 3h --to 2h       # between two points
 ```
 
 Times are RFC 3339, or a duration ago (`2h`, `90m`). `diff` runs the system `diff` and, like it,
-exits 1 when the two sides differ.
+exits 1 when the two sides differ and 2 on errors, such as an unreachable hub.
 
 ## Which object
 
@@ -33,8 +33,10 @@ and the namespace comes from `-n` or the context.
 
 The cluster is `--cluster`, then `$MNEMO_CLUSTER`, then the context name. It has to match the
 name the agent runs with (`--cluster`), which often differs from the context, so set
-`MNEMO_CLUSTER` when it does. `changes` needs none of this and defaults to every cluster and
-namespace.
+`MNEMO_CLUSTER` when it does. `changes` needs none of this, ignores `$MNEMO_CLUSTER`, and
+defaults to every cluster and namespace unless you pass `--cluster` or `-n`.
+
+`deploy.apps/api` names the group as well, as in `kubectl`.
 
 History matters most when the cluster is down or the kind is gone. `--group` skips the cluster
 entirely, and takes the kind literally:
