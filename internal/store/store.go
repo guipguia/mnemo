@@ -216,6 +216,14 @@ func (s *Store) Size(ctx context.Context) (int64, error) {
 	return n, err
 }
 
+// latestQuery reads an object's newest version. By ts, which the changes_object index
+// holds, so it reads one index entry; Record never lets a version's ts go below the one
+// before, so newest by ts is newest by id. ORDER BY id alone sorted every version.
+// Current, Prune and Expire also rely on that: nothing may set ts out of id order.
+const latestQuery = `SELECT object, ts FROM changes
+	WHERE cluster = ? AND api_group = ? AND kind = ? AND namespace = ? AND name = ?
+	ORDER BY ts DESC, id DESC LIMIT 1`
+
 // Record stores c unless it matches the object's latest version, and reports whether it did.
 // c.Object is the current normalized object, or nil if the object was deleted.
 // listed is true when the object came from a list rather than a watch event.
@@ -237,9 +245,7 @@ func (w *Writer) Record(ctx context.Context, c *Change, listed bool, attribute f
 
 	var prev []byte // nil if never seen or latest version is a deletion
 	var prevTS int64
-	err = tx.QueryRowContext(ctx, `SELECT object, ts FROM changes
-		WHERE cluster = ? AND api_group = ? AND kind = ? AND namespace = ? AND name = ?
-		ORDER BY id DESC LIMIT 1`, c.Cluster, c.Group, c.Kind, c.Namespace, c.Name).Scan(&prev, &prevTS)
+	err = tx.QueryRowContext(ctx, latestQuery, c.Cluster, c.Group, c.Kind, c.Namespace, c.Name).Scan(&prev, &prevTS)
 	seen := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err

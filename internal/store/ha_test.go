@@ -135,8 +135,10 @@ func TestLeader(t *testing.T) {
 	stopC := run(c, "c")
 	defer stopC()
 	b.lockDB.Close() // a dead node doesn't come back: b keeps its held connection, but can't reconnect
+	// Only the leader lock's holder: other runs on the same database hold the write lock.
 	if _, err := d.db.ExecContext(t.Context(), `SELECT pg_terminate_backend(pid) FROM pg_locks
-		WHERE locktype = 'advisory' AND granted AND pid != pg_backend_pid()`); err != nil {
+		WHERE locktype = 'advisory' AND granted AND pid != pg_backend_pid()
+		AND classid = ? AND objid = ? AND objsubid = 1`, leaderLock>>32, leaderLock&0xffffffff); err != nil {
 		t.Fatal(err)
 	}
 	waitLeader("c")
