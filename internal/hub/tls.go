@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"slices"
@@ -18,7 +19,7 @@ import (
 func KeyPair(certFile, keyFile string) (func() (*tls.Certificate, error), error) {
 	var mu sync.Mutex
 	var cur *tls.Certificate
-	var stamp [2]time.Time
+	var stamp, bad [2]time.Time
 	load := func() (*tls.Certificate, error) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -34,7 +35,11 @@ func KeyPair(certFile, keyFile string) (func() (*tls.Certificate, error), error)
 		c, err := tls.LoadX509KeyPair(certFile, keyFile)
 		if err != nil {
 			if cur != nil {
-				return cur, nil // mid-rotation (cert written, key not yet): retry next handshake
+				if now != bad { // once per change, not per handshake
+					slog.Warn("certificate reload failed; keeping the previous one", "cert", certFile, "err", err)
+					bad = now
+				}
+				return cur, nil // e.g. mid-rotation, cert written but not the key: retry next handshake
 			}
 			return nil, err
 		}
@@ -103,11 +108,13 @@ func ClientTLS(caFile, certFile, keyFile string) (*tls.Config, error) {
 }
 
 // certNames reports whether r's verified client certificate names cluster, as its common
-// name or one of its DNS names.
+// name or one of its DNS names. It must say it's for client auth: Go also accepts a
+// certificate with no extended key usage, which could have been issued for anything.
 func certNames(r *http.Request, cluster string) bool {
 	if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 || cluster == "" {
 		return false
 	}
 	c := r.TLS.VerifiedChains[0][0]
-	return c.Subject.CommonName == cluster || slices.Contains(c.DNSNames, cluster)
+	return slices.Contains(c.ExtKeyUsage, x509.ExtKeyUsageClientAuth) &&
+		(c.Subject.CommonName == cluster || slices.Contains(c.DNSNames, cluster))
 }

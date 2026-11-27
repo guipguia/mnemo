@@ -44,11 +44,14 @@ func newTestCA(t *testing.T) *testCA {
 }
 
 // issue writes name.crt and name.key: a server certificate for 127.0.0.1, or a client one.
-func (ca *testCA) issue(name, cn string, dns []string, server bool) (certFile, keyFile string) {
+func (ca *testCA) issue(name, cn string, dns []string, server bool, eku ...x509.ExtKeyUsage) (certFile, keyFile string) {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tmpl := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: cn},
 		DNSNames: dns, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, KeyUsage: x509.KeyUsageDigitalSignature}
+	if eku != nil {
+		tmpl.ExtKeyUsage = eku[:0:0] // none
+	}
 	if server {
 		tmpl.ExtKeyUsage, tmpl.IPAddresses = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, []net.IP{net.IPv4(127, 0, 0, 1)}
 	}
@@ -115,6 +118,10 @@ func TestAgentListener(t *testing.T) {
 	dc, dk := ca.issue("dns", "agent", []string{"staging"}, false) // the name can be a DNS SAN
 	if err := push(client(dc, dk), "staging"); err != nil {
 		t.Errorf("DNS name: %v", err)
+	}
+	nc, nk := ca.issue("noeku", "prod", nil, false, x509.ExtKeyUsageAny) // any non-nil: no EKU at all
+	if err := push(client(nc, nk), "prod"); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Errorf("certificate without client-auth usage: %v, want 403", err)
 	}
 	if err := push(client("", ""), "prod"); err == nil {
 		t.Error("no client certificate: accepted")

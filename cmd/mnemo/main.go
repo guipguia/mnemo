@@ -164,6 +164,9 @@ func run(ctx context.Context, mode string, args []string) error {
 			if *hubURL == "" || *token == "" {
 				return errors.New("agent mode needs --hub and --token")
 			}
+			if *clientCert != "" && !strings.HasPrefix(*hubURL, "https://") {
+				return errors.New("--client-cert needs an https:// --hub")
+			}
 			tc, err := hub.ClientTLS(*hubCA, *clientCert, *clientKey)
 			if err != nil {
 				return fmt.Errorf("agent TLS: %w", err)
@@ -189,7 +192,12 @@ func run(ctx context.Context, mode string, args []string) error {
 			}
 			asrv := &http.Server{Addr: *agentListen, Handler: hub.AgentHandler(st, *token), TLSConfig: tc, ReadHeaderTimeout: 10 * time.Second}
 			go func() { errc <- asrv.ListenAndServeTLS("", "") }()
-			go func() { <-ctx.Done(); asrv.Close() }()
+			go func() {
+				<-ctx.Done()
+				shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				asrv.Shutdown(shutdown) // let in-flight batches finish
+			}()
 			pushToken = ""
 		}
 		srv := &http.Server{Addr: *listen, Handler: routes(st, pushToken, au), ReadHeaderTimeout: 10 * time.Second}
