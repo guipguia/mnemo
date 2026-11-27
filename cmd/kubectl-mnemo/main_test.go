@@ -132,6 +132,15 @@ func TestEnv(t *testing.T) {
 	var gotQuery, gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery, gotAuth = r.URL.RawQuery, r.Header.Get("Authorization")
+		if r.URL.Path == "/login" {
+			w.Write([]byte("<html>sign in</html>"))
+			return
+		}
+		if gotAuth == "" { // a logged-out auth proxy
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("[]"))
 	}))
 	defer srv.Close()
@@ -143,6 +152,10 @@ func TestEnv(t *testing.T) {
 	}
 	if strings.Contains(gotQuery, "cluster=") || gotAuth != "Bearer flag" {
 		t.Errorf("query %q, auth %q: want every cluster, and --header over $MNEMO_HEADER", gotQuery, gotAuth)
+	}
+	t.Setenv("MNEMO_HEADER", "")
+	if err := run(context.Background(), []string{"changes"}, io.Discard); err == nil || !strings.Contains(err.Error(), "not logged in") {
+		t.Errorf("login page: %v", err)
 	}
 	t.Setenv("MNEMO_HEADER", "Authorization Bearer s3cret")
 	if err := run(context.Background(), []string{"changes"}, io.Discard); err == nil || strings.Contains(err.Error(), "s3cret") {

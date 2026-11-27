@@ -464,8 +464,7 @@ func (c client) get(ctx context.Context, path string, q url.Values, out any) err
 		}
 		req.Header.Set(strings.TrimSpace(k), strings.TrimSpace(v))
 	}
-	// No redirects: a logged-out auth proxy redirects to an HTML login page.
-	client := &http.Client{Timeout: time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Timeout: time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -473,10 +472,14 @@ func (c client) get(ctx context.Context, path string, q url.Values, out any) err
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
+		// A logged-out auth proxy redirects to its HTML login page, which answers 200.
+		if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+			return fmt.Errorf("hub: got %q from %s, not the mnemo API: not logged in (see --header), or wrong --hub", ct, resp.Request.URL.Redacted())
+		}
 		return json.NewDecoder(resp.Body).Decode(out)
 	case http.StatusNotFound:
 		return errNotFound
-	case http.StatusUnauthorized, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect:
+	case http.StatusUnauthorized:
 		return errors.New("hub: not logged in; pass credentials with --header, see docs/kubectl-plugin.md")
 	}
 	msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
