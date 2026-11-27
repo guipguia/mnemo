@@ -1,4 +1,5 @@
 {{- if include "mnemo.hasHub" . }}
+{{- if not .Values.hub.database.existingSecret }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -17,6 +18,7 @@ spec:
     requests:
       storage: {{ .Values.hub.persistence.size }}
 ---
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:

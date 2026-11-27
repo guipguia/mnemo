@@ -13,7 +13,7 @@ It's a separate listener and Service because metrics name clusters and webhooks 
 | `mnemo_build_info{version}` | gauge | Always 1. |
 | `mnemo_changes_recorded_total` | counter | Changes recorded since the database was created. |
 | `mnemo_ingest_failures_total` | counter | Agent batches the hub rejected or failed to store, since the hub started. |
-| `mnemo_db_size_bytes` | gauge | SQLite database size, without the WAL. |
+| `mnemo_db_size_bytes` | gauge | Database size: SQLite without the WAL, or the whole PostgreSQL database. |
 | `mnemo_cluster_last_seen_timestamp_seconds{cluster}` | gauge | When the cluster's agent last checked in: changes, or its one-minute heartbeat. |
 | `mnemo_webhook_pending_changes{webhook}` | gauge | Changes recorded after the webhook's position, matching or not. |
 | `mnemo_webhook_position{webhook}` | gauge | ID of the last change the webhook handled. It moves only when deliveries succeed. |

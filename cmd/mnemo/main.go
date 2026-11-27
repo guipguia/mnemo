@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -53,13 +54,15 @@ func main() {
 
 func run(ctx context.Context, mode string, args []string) error {
 	fs := flag.NewFlagSet(mode, flag.ExitOnError)
-	token := fs.String("token", os.Getenv("MNEMO_TOKEN"), "shared agent/hub token (default $MNEMO_TOKEN)")
+	// Secrets default from the environment after parsing, never as flag defaults: usage
+	// output (-h, or any flag mistake) prints defaults.
+	token := fs.String("token", "", "shared agent/hub token (default $MNEMO_TOKEN)")
 	var db, listen, metricsListen, webhooks, cluster, hubURL, kubeconfig, resources *string
 	var auditListen, auditToken, auditCert, auditKey *string
 	var retentionDays, retentionVersions, eventRetentionDays *int
 	var newAuth func(context.Context) (*auth.Auth, error)
 	if mode == "hub" || mode == "all" {
-		db = fs.String("db", "mnemo.db", "SQLite database path")
+		db = fs.String("db", "", "SQLite database path, or a postgres:// URL (default $MNEMO_DB, then mnemo.db); see docs/postgres.md")
 		listen = fs.String("listen", ":8080", "HTTP listen address")
 		metricsListen = fs.String("metrics-listen", "", "serve Prometheus /metrics here, e.g. :9090 (default: off); see docs/metrics.md")
 		retentionDays = fs.Int("retention-days", 0, "delete versions older than this many days (0: keep forever); each object's current state is kept")
@@ -73,7 +76,7 @@ func run(ctx context.Context, mode string, args []string) error {
 		kubeconfig = fs.String("kubeconfig", "", "kubeconfig path (default: in-cluster config)")
 		resources = fs.String("resources", strings.Join(agent.DefaultResources, ","), "comma-separated group/version/resource list")
 		auditListen = fs.String("audit-listen", "", "receive the API server's audit webhook here, e.g. :8443 (default: off); see docs/audit.md")
-		auditToken = fs.String("audit-token", os.Getenv("MNEMO_AUDIT_TOKEN"), "bearer token the audit webhook must send (default $MNEMO_AUDIT_TOKEN)")
+		auditToken = fs.String("audit-token", "", "bearer token the audit webhook must send (default $MNEMO_AUDIT_TOKEN)")
 		auditCert = fs.String("audit-tls-cert", "", "TLS certificate for the audit webhook (required with --audit-listen)")
 		auditKey = fs.String("audit-tls-key", "", "TLS key for the audit webhook (required with --audit-listen)")
 	}
@@ -84,6 +87,9 @@ func run(ctx context.Context, mode string, args []string) error {
 		return fmt.Errorf("unknown mode %q: want hub, agent, or all", mode)
 	}
 	fs.Parse(args)
+	fromEnv(token, "MNEMO_TOKEN", "")
+	fromEnv(db, "MNEMO_DB", "mnemo.db")
+	fromEnv(auditToken, "MNEMO_AUDIT_TOKEN", "")
 
 	var st *store.Store
 	var au *auth.Auth
@@ -165,7 +171,7 @@ func run(ctx context.Context, mode string, args []string) error {
 			defer cancel()
 			srv.Shutdown(shutdown)
 		}()
-		slog.Info("hub listening", "version", version, "addr", *listen, "db", *db, "ingest", *token != "", "auth", au.Mode(),
+		slog.Info("hub listening", "version", version, "addr", *listen, "db", redact(*db), "ingest", *token != "", "auth", au.Mode(),
 			"webhooks", *webhooks, "retentionDays", *retentionDays, "retentionVersions", *retentionVersions, "eventRetentionDays", *eventRetentionDays)
 		if *metricsListen != "" {
 			// Separate listener: metrics name clusters and webhooks, and skip the access policy.
@@ -221,6 +227,29 @@ func expire(ctx context.Context, st *store.Store, days, versions, eventDays int)
 		case <-time.After(time.Hour):
 		}
 	}
+}
+
+// fromEnv fills an unset flag (p may be nil: not in this mode) from $key, then def.
+func fromEnv(p *string, key, def string) {
+	if p == nil || *p != "" {
+		return
+	}
+	if *p = os.Getenv(key); *p == "" {
+		*p = def
+	}
+}
+
+// redact hides a database URL's password, in the user info or as ?password=, for logging.
+func redact(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err != nil || !store.IsPostgres(dsn) {
+		return dsn
+	}
+	if q := u.Query(); q.Has("password") {
+		q.Set("password", "xxxxx")
+		u.RawQuery = q.Encode()
+	}
+	return u.Redacted()
 }
 
 func loopback(addr string) bool {

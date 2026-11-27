@@ -75,7 +75,7 @@ func (s *Store) DeployAt(ctx context.Context, cluster, kind, namespace, name str
 	args := []any{cluster, kind, name, namespace, namespace}
 	ts, slack := t.UnixNano(), int64(deploySlack)
 	d, err := scanDeploy(s.db.QueryRowContext(ctx, q+`end_ts >= ? AND start_ts <= ?
-		AND end_ts <= CASE WHEN start_ts = 0 THEN ? ELSE ? END
+		AND ((start_ts = 0 AND end_ts <= ?) OR (start_ts != 0 AND end_ts <= ?))
 		ORDER BY end_ts LIMIT 1`, append(args, ts-slack, ts+slack, ts+int64(2*time.Minute), ts+int64(10*time.Minute))...))
 	if errors.Is(err, sql.ErrNoRows) {
 		d, err = scanDeploy(s.db.QueryRowContext(ctx, q+"end_ts < ? ORDER BY end_ts DESC LIMIT 1", append(args, ts)...))

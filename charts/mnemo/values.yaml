@@ -57,6 +57,12 @@ agent:
       nodePort: null
 
 hub:
+  # PostgreSQL instead of SQLite on a volume: name a Secret with key "url", a
+  # postgres://user:password@host:5432/db?sslmode=verify-full URL. Then no PVC is created and
+  # hub.persistence and hub.backup don't apply (back up the database your usual way).
+  # Still one hub at a time. See docs/postgres.md.
+  database:
+    existingSecret: ""
   persistence:
     size: 5Gi
     storageClass: ""

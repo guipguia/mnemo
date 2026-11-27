@@ -29,11 +29,13 @@ func (s *Store) RecordEvents(ctx context.Context, cluster string, evs []Event) e
 	}
 	defer tx.Rollback()
 	for _, e := range evs {
+		// Messages can carry container output; PostgreSQL text can't hold NUL.
+		e.Message, e.Reason, e.Source = noNUL(e.Message), noNUL(e.Reason), noNUL(e.Source)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO events
 			(cluster, uid, api_group, kind, namespace, name, type, reason, message, source, count, first_ts, last_ts)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (cluster, uid) DO UPDATE SET message = excluded.message, count = excluded.count,
-				last_ts = MAX(last_ts, excluded.last_ts)`,
+				last_ts = `+s.db.greatest()+`(events.last_ts, excluded.last_ts)`,
 			cluster, e.UID, e.Group, e.Kind, e.Namespace, e.Name, e.Type, e.Reason, e.Message, e.Source,
 			e.Count, e.FirstTime.UnixNano(), e.LastTime.UnixNano()); err != nil {
 			return err
@@ -41,6 +43,8 @@ func (s *Store) RecordEvents(ctx context.Context, cluster string, evs []Event) e
 	}
 	return tx.Commit()
 }
+
+func noNUL(s string) string { return strings.ReplaceAll(s, "\x00", "") }
 
 // EventFilter narrows Events. Empty fields match everything. With Kind and Name set, it
 // also matches the object's rollout: a Deployment's ReplicaSets and Pods, a StatefulSet's

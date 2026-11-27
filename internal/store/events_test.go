@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -10,7 +9,7 @@ import (
 
 func TestEvents(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open(filepath.Join(t.TempDir(), "mnemo.db"))
+	s, err := openTest(t)
 	if err != nil {
 		t.Fatal(err)
 	}

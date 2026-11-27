@@ -42,7 +42,7 @@ func metrics(st *store.Store, hooks *webhook.Config) http.Handler {
 		fmt.Fprintf(&b, "mnemo_changes_recorded_total %d\n", last)
 		metric("mnemo_ingest_failures_total", "counter", "Agent batches the hub rejected or failed to store since it started.")
 		fmt.Fprintf(&b, "mnemo_ingest_failures_total %d\n", hub.IngestFailures.Load())
-		metric("mnemo_db_size_bytes", "gauge", "SQLite database size, excluding the WAL.")
+		metric("mnemo_db_size_bytes", "gauge", "Database size: SQLite without the WAL, or the whole PostgreSQL database.")
 		fmt.Fprintf(&b, "mnemo_db_size_bytes %d\n", size)
 		metric("mnemo_cluster_last_seen_timestamp_seconds", "gauge", "When each cluster's agent last checked in (changes or its one-minute heartbeat).")
 		for _, c := range clusters {
