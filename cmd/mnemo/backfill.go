@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -33,12 +34,18 @@ func backfill(ctx context.Context, args []string) error {
 	token := fs.String("token", "", "shared agent/hub token (default $MNEMO_TOKEN)")
 	uid := fs.String("cluster-uid", "", "the cluster's kube-system namespace UID (default: read it with --kubeconfig)")
 	kubeconfig := fs.String("kubeconfig", "", "kubeconfig to read the cluster UID with (default: ~/.kube/config rules)")
+	kubeContext := fs.String("context", "", "kubeconfig context (default: the current one)")
 	resources := fs.String("resources", strings.Join(agent.DefaultResources, ","), "comma-separated group/version/resource list, as the agent's")
 	hubCA := fs.String("hub-ca", "", "CA to trust for the hub's certificate (default: the system's)")
 	clientCert := fs.String("client-cert", "", "client certificate for a hub with --agent-listen; must name --cluster")
 	clientKey := fs.String("client-key", "", "client key for --client-cert")
 	fs.Parse(args)
 	fromEnv(token, "MNEMO_TOKEN", "")
+	for _, a := range fs.Args() {
+		if len(a) > 1 && strings.HasPrefix(a, "-") {
+			return fmt.Errorf("%s: flags go before the audit logs", a)
+		}
+	}
 	if *cluster == "" || *hubURL == "" || *token == "" || fs.NArg() == 0 {
 		fs.Usage()
 		return errors.New("--cluster, --hub, --token and at least one audit log are required")
@@ -55,7 +62,8 @@ func backfill(ctx context.Context, args []string) error {
 	if *uid == "" {
 		rules := clientcmd.NewDefaultClientConfigLoadingRules()
 		rules.ExplicitPath = *kubeconfig
-		cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, nil).ClientConfig()
+		cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{CurrentContext: *kubeContext})
+		cfg, err := cc.ClientConfig()
 		if err != nil {
 			return fmt.Errorf("reading the cluster UID needs cluster access (or pass --cluster-uid): %w", err)
 		}
@@ -68,6 +76,10 @@ func backfill(ctx context.Context, args []string) error {
 			return fmt.Errorf("read cluster identity (kube-system UID): %w", err)
 		}
 		*uid = string(ns.GetUID())
+		raw, _ := cc.RawConfig()
+		name := cmp.Or(*kubeContext, raw.CurrentContext)
+		// A wrong context would tie --cluster to another cluster's identity: say which one.
+		slog.Info("cluster identity", "context", name, "server", cfg.Host, "uid", *uid)
 	}
 	tc, err := hub.ClientTLS(*hubCA, *clientCert, *clientKey)
 	if err != nil {
@@ -84,6 +96,9 @@ func backfill(ctx context.Context, args []string) error {
 		slog.Info("read audit log", "file", path, "writes", n)
 	}
 	n, err := b.Run(ctx)
+	if n == 0 && err == nil {
+		slog.Warn("no writes to send: the logs need the RequestResponse audit level for the watched resources (see docs/audit.md)")
+	}
 	slog.Info("backfill", "cluster", *cluster, "sent", n)
 	return err
 }

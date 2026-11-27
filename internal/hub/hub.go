@@ -26,9 +26,6 @@ import (
 // Batch is what an agent pushes. The hub stores all of it in one transaction, or none of it.
 // Session, Stream and Seq order a stream's batches: the hub drops one that comes after a
 // later one, such as a slow original that finishes after its own retry (see store.Fresh).
-// BackfillStream is the stream of history read from audit logs (see agent.Backfill).
-const BackfillStream = "backfill"
-
 type Batch struct {
 	Cluster     string            `json:"cluster"`
 	ClusterUID  string            `json:"clusterUID"`        // kube-system namespace UID
@@ -42,6 +39,9 @@ type Batch struct {
 	Events      []store.Event     `json:"events,omitempty"`
 	Deploys     []store.Deploy    `json:"deploys,omitempty"`
 }
+
+// BackfillStream is the stream of history read from audit logs (see agent.Backfill).
+const BackfillStream = "backfill"
 
 // Audit is a write seen by the cluster's audit webhook: who wrote namespace/name at
 // ResourceVersion, or who deleted the object with UID (most deletes return no resourceVersion).
@@ -131,9 +131,9 @@ func ingestTx(ctx context.Context, s *store.Writer, b Batch) error {
 	}
 	for _, it := range b.Items {
 		it.Cluster = b.Cluster
-		if b.Stream == BackfillStream && it.Object != nil && it.ResourceVersion != "" {
-			// A backfill run again over the same logs: keep the versions it already stored.
-			if dup, err := s.HasVersion(ctx, it.Ref, it.ResourceVersion); err != nil || dup {
+		if b.Stream == BackfillStream {
+			// Run again, or alongside another backfill: never put a version under a newer one.
+			if dup, err := s.Stored(ctx, it.Ref, it.ResourceVersion, it.Time); err != nil || dup {
 				if err != nil {
 					return err
 				}

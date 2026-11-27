@@ -100,18 +100,32 @@ mnemo backfill --cluster prod --hub https://mnemo.example.com --token "$MNEMO_TO
 
 - **Run it before the cluster's first agent run.** History is a chain of versions, each
   compared with the one before, so older versions can't go under newer ones. Once an agent
-  has run for the cluster, the hub refuses backfill. When the agent then starts, its first
-  list compares each object with its last backfilled version.
+  has run for the cluster, the hub refuses backfill (agents from before v0.3 don't mark
+  that: check the cluster has no history first). When the agent then starts, its first list
+  compares each object with its last backfilled version.
 - Pass every API server's logs (HA control planes log separately), compressed or not, in
-  any order: writes are sorted by time.
-- Running it again is safe, after a crash or with logs that add *later* writes: versions
-  the hub already has are skipped. Logs that add *earlier* writes would land after the newer
-  versions.
+  any order, in one run. Each object's writes are ordered by the etcd revision they
+  produced, not by API server clocks.
+- Running it again is safe: the hub skips any write no newer than what it already has for
+  that object. So logs found later that hold *earlier* writes add nothing; include them in
+  the first run.
 - `--cluster` must be the name the agent will use. The cluster's identity (the
-  `kube-system` namespace UID) is read with your kubeconfig, or given with `--cluster-uid`.
-  `--resources` should match the agent's.
-- Writes through subresources (`/scale`, `/status`) and dry runs are skipped: a `kubectl
-  scale` shows up at the object's next full write, or at the agent's first list.
+  `kube-system` namespace UID) is read with your kubeconfig (`--context` to pick one; the
+  context, server and UID used are logged), or given with `--cluster-uid`. `--resources`
+  should match the agent's.
+- An object's first write in the logs is recorded as a creation only if it is one;
+  otherwise the object existed before the logs, and that version is a baseline. A write
+  that changed nothing (same revision) is dropped. A delete held by finalizers is recorded
+  when the last finalizer goes.
+- Skipped: writes through subresources (`/scale`, `/status`), dry runs, Events (the agent
+  archives those on its own), and objects in another API version than the agent watches. A
+  `kubectl scale` shows up in the object's next full write, credited to that writer.
+- **Webhooks deliver backfilled changes** like any others, possibly months of them. Run
+  backfill before configuring webhooks, or rename them afterwards: a webhook with a new
+  name starts from the newest change.
+- **Retention applies:** with `--retention-days`, backfilled versions older than that are
+  deleted within the hour (each object's latest version is kept).
 - Managed clusters (EKS, GKE, AKS) keep audit logs in the cloud's log service: export them
   as JSON lines first. Writes at the `Metadata` level carry no object and are skipped.
-- Every write is held in memory until it is sent: a few GB of logs need about as much RAM.
+- A record cut off at the end of a file (a log still being written) is ignored. Every write
+  is held in memory until it is sent: a few GB of logs need about as much RAM.

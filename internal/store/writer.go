@@ -68,12 +68,13 @@ func (w *Writer) Fresh(ctx context.Context, cluster, session, stream string, seq
 	return err == nil, err
 }
 
-// HasVersion reports whether r's version at resourceVersion rv is already stored.
-func (w *Writer) HasVersion(ctx context.Context, r Ref, rv string) (bool, error) {
+// Stored reports whether r already has a version recorded at or after t, or one at
+// resourceVersion rv: a backfill's write the hub has, or one older than what it has.
+func (w *Writer) Stored(ctx context.Context, r Ref, rv string, t time.Time) (bool, error) {
 	var one int
-	err := w.tx.QueryRowContext(ctx, `SELECT 1 FROM changes WHERE cluster = ? AND resource_version = ?
-		AND api_group = ? AND kind = ? AND namespace = ? AND name = ? AND type != ? LIMIT 1`,
-		r.Cluster, rv, r.Group, r.Kind, r.Namespace, r.Name, string(Deleted)).Scan(&one)
+	err := w.tx.QueryRowContext(ctx, `SELECT 1 FROM changes WHERE cluster = ? AND api_group = ? AND kind = ? AND namespace = ? AND name = ?
+		AND (ts >= ? OR (? != '' AND resource_version = ? AND type != ?)) LIMIT 1`,
+		r.Cluster, r.Group, r.Kind, r.Namespace, r.Name, t.UnixNano(), rv, rv, string(Deleted)).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
