@@ -124,6 +124,10 @@ Headlamp → Settings → Plugins → mnemo-headlamp:
 
 ## Develop
 
+`package.json` overrides `tinypool` and `webpack-dev-middleware` to patched majors that the
+plugin toolkit doesn't ask for yet: drop them once `@kinvolk/headlamp-plugin` moves to
+vitest 4.
+
 ```sh
 cd headlamp
 npm ci
