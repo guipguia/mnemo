@@ -187,3 +187,11 @@ func waitFor(t *testing.T, ok func() bool) {
 		}
 	}
 }
+
+func TestPostErrorHidesURL(t *testing.T) {
+	w := Webhook{Name: "slack", URL: "http://127.0.0.1:1/services/T000/B000/SECRETPATH?token=QSECRET"}
+	err := w.post(t.Context(), &http.Client{}, []byte(`{}`), 1)
+	if err == nil || strings.Contains(err.Error(), "SECRET") {
+		t.Errorf("err = %v, want an error without the URL", err)
+	}
+}

@@ -276,6 +276,10 @@ func (w Webhook) post(ctx context.Context, client *http.Client, body []byte, id 
 		req.Header.Set("X-Mnemo-Signature", "sha256="+Sign(w.Secret, body))
 	}
 	resp, err := client.Do(req)
+	if ue := (*url.Error)(nil); errors.As(err, &ue) {
+		// Without the URL: it's often the secret (a Slack webhook's path), and logs name the webhook.
+		return fmt.Errorf("%s: %w", ue.Op, ue.Err)
+	}
 	if err != nil {
 		return err
 	}
