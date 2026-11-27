@@ -24,6 +24,12 @@ cloud audit logs are on the [roadmap](../ROADMAP.md).
 - Best-effort: if the hub is down when events arrive, the field manager stays the author.
   An event that arrives before the change it describes is held for up to 10 minutes and
   applied when the change is recorded.
+- The first audit event for a change to *arrive* is the one that counts. A write that
+  changes nothing (an update with the same content) answers with the object's current
+  resourceVersion, and must not take the credit from whoever made that version. With
+  several API servers, each batches its own webhook, so a no-op write through one can
+  arrive before the real write through another: shorten `--audit-webhook-batch-max-wait`
+  if that matters to you.
 
 ## 1. Install the agent with audit on
 

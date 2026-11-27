@@ -205,6 +205,24 @@ func TestIngestAudit(t *testing.T) {
 		}
 	}
 
+	// A write that changed nothing answers with the current resourceVersion: its audit event
+	// must not take the credit from alice.
+	ingest(Batch{Audits: []Audit{{Namespace: "shop", Name: "cfg", ResourceVersion: "10",
+		User: "system:serviceaccount:argocd:argocd-application-controller", UserAgent: "argocd-application-controller/v3.1.0"}}})
+	if h, _ := s.History(ctx, store.Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: "shop", Name: "cfg"}, 1); len(h) != 1 || h[0].Author != "alice@example.com" {
+		t.Errorf("after a no-op write's audit: %+v, want alice still credited", h)
+	}
+	// ...and isn't held either: it matched a change, one already credited.
+	if err := s.Write(ctx, func(w *store.Writer) error {
+		c := &store.Change{Ref: store.Ref{Cluster: "prod", Namespace: "shop", Name: "cfg"}, ResourceVersion: "10", Type: store.Modified}
+		if as, _ := w.TakeHeldAudits(ctx, c); len(as) != 0 {
+			t.Errorf("a no-op write's audit event was held: %+v", as)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	// An audit event that comes before its change (the agent batches watch events) is held
 	// and applied when the change arrives: a modification by resourceVersion, a deletion by UID.
 	ingest(Batch{Audits: []Audit{

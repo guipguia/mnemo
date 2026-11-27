@@ -45,6 +45,12 @@ write lock or elect a leader, so they must never run beside newer ones. With one
 chart replaces the pod (`Recreate`), which is safe; raise `hub.replicas` only after the
 upgrade is done.
 
+**Schema changes and rolling back:** a hub upgrades the database's schema when it starts,
+once, under the write lock (SQLite too). A mnemo older than the database's schema refuses to
+start, so rolling back across a release that changed the schema means restoring the
+database from before the upgrade (take a backup first). The release notes say which
+releases change it.
+
 ## Moving from SQLite
 
 There's no migration tool yet. A new hub on PostgreSQL starts with an empty history. Restart
