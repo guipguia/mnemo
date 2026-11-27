@@ -44,13 +44,13 @@ func newTestCA(t *testing.T) *testCA {
 }
 
 // issue writes name.crt and name.key: a server certificate for 127.0.0.1, or a client one.
-func (ca *testCA) issue(name, cn string, dns []string, server bool, eku ...x509.ExtKeyUsage) (certFile, keyFile string) {
+func (ca *testCA) issue(name, cn string, dns []string, server, noEKU bool) (certFile, keyFile string) {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tmpl := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: cn},
 		DNSNames: dns, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, KeyUsage: x509.KeyUsageDigitalSignature}
-	if eku != nil {
-		tmpl.ExtKeyUsage = eku[:0:0] // none
+	if noEKU {
+		tmpl.ExtKeyUsage = nil
 	}
 	if server {
 		tmpl.ExtKeyUsage, tmpl.IPAddresses = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, []net.IP{net.IPv4(127, 0, 0, 1)}
@@ -77,7 +77,7 @@ func TestAgentListener(t *testing.T) {
 	}
 	defer st.Close()
 	ca := newTestCA(t)
-	sc, sk := ca.issue("hub", "hub", nil, true)
+	sc, sk := ca.issue("hub", "hub", nil, true, false)
 	tc, err := AgentTLS(sc, sk, filepath.Join(ca.dir, "ca.crt"))
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestAgentListener(t *testing.T) {
 		return c.Push(t.Context(), Batch{Cluster: cluster, ClusterUID: "uid-" + cluster})
 	}
 
-	pc, pk := ca.issue("prod", "prod", nil, false)
+	pc, pk := ca.issue("prod", "prod", nil, false, false)
 	prod := client(pc, pk)
 	if err := push(prod, "prod"); err != nil {
 		t.Errorf("prod pushing prod: %v", err)
@@ -115,11 +115,11 @@ func TestAgentListener(t *testing.T) {
 	if _, err := prod.Resume(t.Context(), "staging", "uid-staging"); err == nil || !strings.Contains(err.Error(), "403") {
 		t.Errorf("prod resuming staging: %v, want 403", err)
 	}
-	dc, dk := ca.issue("dns", "agent", []string{"staging"}, false) // the name can be a DNS SAN
+	dc, dk := ca.issue("dns", "agent", []string{"staging"}, false, false) // the name can be a DNS SAN
 	if err := push(client(dc, dk), "staging"); err != nil {
 		t.Errorf("DNS name: %v", err)
 	}
-	nc, nk := ca.issue("noeku", "prod", nil, false, x509.ExtKeyUsageAny) // any non-nil: no EKU at all
+	nc, nk := ca.issue("noeku", "prod", nil, false, true)
 	if err := push(client(nc, nk), "prod"); err == nil || !strings.Contains(err.Error(), "403") {
 		t.Errorf("certificate without client-auth usage: %v, want 403", err)
 	}
@@ -127,13 +127,13 @@ func TestAgentListener(t *testing.T) {
 		t.Error("no client certificate: accepted")
 	}
 	other := newTestCA(t)
-	oc, ok := other.issue("prod", "prod", nil, false)
+	oc, ok := other.issue("prod", "prod", nil, false, false)
 	if err := push(client(oc, ok), "prod"); err == nil {
 		t.Error("certificate from another CA: accepted")
 	}
 
 	// Renewed in place: the same files now name staging, and the client picks it up.
-	ca.issue("prod", "staging", nil, false)
+	ca.issue("prod", "staging", nil, false, false)
 	prod.http.CloseIdleConnections() // a new handshake
 	if err := push(prod, "staging"); err != nil {
 		t.Errorf("after renewal: %v", err)
