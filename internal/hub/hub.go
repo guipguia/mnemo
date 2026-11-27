@@ -14,6 +14,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	otelattr "go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/guipguia/mnemo/internal/store"
@@ -89,12 +93,21 @@ func Resume(ctx context.Context, s *store.Store, cluster, uid, session string) (
 var IngestFailures atomic.Int64
 
 func Ingest(ctx context.Context, s *store.Store, b Batch) error {
+	ctx, span := tracer.Start(ctx, "ingest", trace.WithAttributes(otelattr.String("mnemo.cluster", b.Cluster),
+		otelattr.String("mnemo.stream", b.Stream), otelattr.Int("mnemo.items", len(b.Items)), otelattr.Int("mnemo.events", len(b.Events))))
+	defer span.End()
 	err := ingest(ctx, s, b)
 	if err != nil && ctx.Err() == nil {
 		IngestFailures.Add(1)
 	}
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
 	return err
 }
+
+var tracer = otel.Tracer("github.com/guipguia/mnemo/internal/hub")
 
 func ingest(ctx context.Context, s *store.Store, b Batch) error {
 	if b.Cluster == "" || b.ClusterUID == "" {

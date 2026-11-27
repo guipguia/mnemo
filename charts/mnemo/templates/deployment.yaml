@@ -142,6 +142,9 @@ spec:
             - name: MNEMO_SESSION_KEY
               valueFrom: {secretKeyRef: {name: {{ $auth.oidc.existingSecret }}, key: session-key}}
             {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- if or $hub $audit }}
           ports:
             {{- if $hub }}

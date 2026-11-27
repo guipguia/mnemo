@@ -158,6 +158,9 @@ hub:
       groupsHeader: X-Forwarded-Groups
 
 extraArgs: []
+# Extra container environment, e.g. OpenTelemetry tracing (docs/tracing.md):
+# - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.monitoring:4318"}
+extraEnv: []
 resources:
   requests: {cpu: 50m, memory: 64Mi}
   limits: {memory: 512Mi}

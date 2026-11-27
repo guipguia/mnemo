@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 
@@ -154,7 +155,7 @@ func newAnnotation(c store.Change, link string) annotation {
 
 // Run delivers to every webhook until ctx is done.
 func Run(ctx context.Context, st *store.Store, c *Config) {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: otelhttp.NewTransport(http.DefaultTransport)}
 	var wg sync.WaitGroup
 	for _, w := range c.Webhooks {
 		wg.Go(func() { w.run(ctx, st, strings.TrimSuffix(c.URL, "/"), client) })

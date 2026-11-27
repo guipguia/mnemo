@@ -97,6 +97,15 @@ func run(ctx context.Context, mode string, args []string) error {
 		return fmt.Errorf("unknown mode %q: want hub, agent, or all", mode)
 	}
 	fs.Parse(args)
+	stopTracing, err := tracing(ctx, mode)
+	if err != nil {
+		return fmt.Errorf("tracing: %w", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		stopTracing(ctx) // flush the last spans
+	}()
 	fromEnv(token, "MNEMO_TOKEN", "")
 	fromEnv(db, "MNEMO_DB", "mnemo.db")
 	fromEnv(auditToken, "MNEMO_AUDIT_TOKEN", "")
@@ -195,7 +204,7 @@ func run(ctx context.Context, mode string, args []string) error {
 			if err != nil {
 				return fmt.Errorf("agent listener: %w", err)
 			}
-			asrv := &http.Server{Addr: *agentListen, Handler: hub.AgentHandler(st, *token), TLSConfig: tc, ReadHeaderTimeout: 10 * time.Second}
+			asrv := &http.Server{Addr: *agentListen, Handler: traced(hub.AgentHandler(st, *token)), TLSConfig: tc, ReadHeaderTimeout: 10 * time.Second}
 			go func() { errc <- asrv.ListenAndServeTLS("", "") }()
 			go func() {
 				<-ctx.Done()
@@ -205,7 +214,7 @@ func run(ctx context.Context, mode string, args []string) error {
 			}()
 			pushToken = ""
 		}
-		srv := &http.Server{Addr: *listen, Handler: routes(st, pushToken, au), ReadHeaderTimeout: 10 * time.Second}
+		srv := &http.Server{Addr: *listen, Handler: traced(routes(st, pushToken, au)), ReadHeaderTimeout: 10 * time.Second}
 		go func() { errc <- srv.ListenAndServe() }()
 		go func() {
 			<-ctx.Done()

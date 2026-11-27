@@ -80,6 +80,7 @@ History lives in SQLite on a PersistentVolume (block storage, not NFS), or in
 `hub.retention.versions` (per object); each object's current state is never expired.
 Archived Events expire after `hub.retention.eventDays` (30 by default).
 Prometheus metrics: `hub.metrics.enabled`, see [docs/metrics.md](docs/metrics.md).
+OpenTelemetry traces: set `OTEL_EXPORTER_OTLP_ENDPOINT` in `extraEnv`, see [docs/tracing.md](docs/tracing.md).
 For backups, `hub.backup.*` adds a [Litestream](https://litestream.io) sidecar that streams
 the database to S3, GCS, Azure Blob or SFTP; on an empty volume the hub restores from it
 before starting.
