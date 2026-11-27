@@ -48,7 +48,9 @@ func TestRBAC(t *testing.T) {
 
 	p := writePolicy(t, "rbac:\n  userPrefix: 'oidc:'\n  groupPrefix: 'oidc:'\n")
 	p.RBAC.store = st
-	cm := func(ns string) store.Ref { return store.Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: ns, Name: "a"} }
+	cm := func(ns string) store.Ref {
+		return store.Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: ns, Name: "a"}
+	}
 	deploy := store.Ref{Cluster: "prod", Group: "apps", Kind: "Deployment", Namespace: "shop", Name: "api"}
 	node := store.Ref{Cluster: "prod", Kind: "Node", Name: "n1"}
 	team := User{"bob", []string{"team-shop"}}
