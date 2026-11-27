@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -69,7 +70,18 @@ func Resume(ctx context.Context, s *store.Store, cluster, uid string) (map[strin
 	return s.Checkpoints(ctx, cluster)
 }
 
+// IngestFailures counts batches Ingest rejected or failed to store, for /metrics.
+var IngestFailures atomic.Int64
+
 func Ingest(ctx context.Context, s *store.Store, b Batch) error {
+	err := ingest(ctx, s, b)
+	if err != nil && ctx.Err() == nil {
+		IngestFailures.Add(1)
+	}
+	return err
+}
+
+func ingest(ctx context.Context, s *store.Store, b Batch) error {
 	if b.Cluster == "" || b.ClusterUID == "" {
 		return errors.New("cluster and clusterUID are required")
 	}

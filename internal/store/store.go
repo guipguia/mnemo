@@ -151,6 +151,13 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
+// Size is the database size in bytes, excluding the WAL.
+func (s *Store) Size(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()").Scan(&n)
+	return n, err
+}
+
 // Record stores c unless it matches the object's latest version, and reports whether it did.
 // c.Object is the current normalized object, or nil if the object was deleted.
 // listed is true when the object came from a list rather than a watch event.
