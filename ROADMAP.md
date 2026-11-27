@@ -44,7 +44,7 @@ Design details: [docs/design.md](docs/design.md).
 
 ## Later
 - [ ] Cloud audit log readers (EKS, GKE, AKS) for attribution on managed clusters
-- [ ] Backfill history from existing audit logs
+- [x] Backfill history from existing audit logs ([docs/audit.md](docs/audit.md#backfill))
 
 ## CNCF Sandbox readiness
 - [ ] 2+ maintainers from different organizations

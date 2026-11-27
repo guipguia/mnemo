@@ -68,10 +68,18 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, ou
 	}
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("hub %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(msg))
+		return &HTTPError{Code: resp.StatusCode, msg: fmt.Sprintf("hub %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(msg))}
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
 	}
 	return nil
 }
+
+// HTTPError is a hub answer other than 200 (or 410, ErrSuperseded).
+type HTTPError struct {
+	Code int
+	msg  string
+}
+
+func (e *HTTPError) Error() string { return e.msg }

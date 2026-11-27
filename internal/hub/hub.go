@@ -40,6 +40,9 @@ type Batch struct {
 	Deploys     []store.Deploy    `json:"deploys,omitempty"`
 }
 
+// BackfillStream is the stream of history read from audit logs (see agent.Backfill).
+const BackfillStream = "backfill"
+
 // Audit is a write seen by the cluster's audit webhook: who wrote namespace/name at
 // ResourceVersion, or who deleted the object with UID (most deletes return no resourceVersion).
 type Audit struct {
@@ -128,6 +131,15 @@ func ingestTx(ctx context.Context, s *store.Writer, b Batch) error {
 	}
 	for _, it := range b.Items {
 		it.Cluster = b.Cluster
+		if b.Stream == BackfillStream {
+			// Run again, or alongside another backfill: never put a version under a newer one.
+			if dup, err := s.Stored(ctx, it.Ref, it.ResourceVersion, it.Time); err != nil || dup {
+				if err != nil {
+					return err
+				}
+				continue
+			}
+		}
 		if _, err := s.Record(ctx, &it.Change, it.Listed, func(c *store.Change) { attribute(c, it.Managers) }); err != nil {
 			return err
 		}
