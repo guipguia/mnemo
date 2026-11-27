@@ -155,6 +155,7 @@ func (a *Agent) consume(ctx context.Context, gvr schema.GroupVersionResource, w 
 	var b hub.Batch
 	var pending string // the resourceVersion b reaches; "" when there's nothing to push
 	var linger <-chan time.Time
+	size := 0 // object bytes in b
 	flush := func() error {
 		if pending == "" {
 			return nil
@@ -163,14 +164,25 @@ func (a *Agent) consume(ctx context.Context, gvr schema.GroupVersionResource, w 
 		if err := a.push(ctx, key(gvr), b); err != nil {
 			return err
 		}
-		rv, b, pending, linger = pending, hub.Batch{}, "", nil
+		rv, b, pending, linger, size = pending, hub.Batch{}, "", nil, 0
 		return nil
 	}
 	for {
 		var ev watch.Event
 		select {
 		case <-ctx.Done(): // don't rely on the watch closing its channel on cancel
-			return rv, ctx.Err()
+			// Push what's pending, briefly: redelivered after a restart, those events would
+			// be stamped with the restart's time instead of when they happened.
+			stop := ctx
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(stop), 2*time.Second)
+			defer cancel()
+			if pending != "" {
+				b.Checkpoints = map[string]string{key(gvr): pending}
+				if a.push(ctx, key(gvr), b) == nil {
+					rv = pending
+				}
+			}
+			return rv, stop.Err()
 		case <-linger:
 			if err := flush(); err != nil {
 				return rv, err
@@ -210,6 +222,7 @@ func (a *Agent) consume(ctx context.Context, gvr schema.GroupVersionResource, w 
 				return rv, err
 			}
 			b.Items = append(b.Items, it)
+			size += len(it.Object)
 			if ev.Type != watch.Deleted {
 				b.Deploys = append(b.Deploys, toDeploys(gvr, u, now)...)
 			}
@@ -218,7 +231,7 @@ func (a *Agent) consume(ctx context.Context, gvr schema.GroupVersionResource, w 
 		if linger == nil {
 			linger = time.After(watchLinger)
 		}
-		if len(b.Items)+len(b.Events) >= watchBatch {
+		if len(b.Items)+len(b.Events) >= watchBatch || size >= watchBatchBytes {
 			if err := flush(); err != nil {
 				return rv, err
 			}
@@ -227,8 +240,9 @@ func (a *Agent) consume(ctx context.Context, gvr schema.GroupVersionResource, w 
 }
 
 const (
-	watchBatch  = 100
-	watchLinger = 200 * time.Millisecond
+	watchBatch      = 100
+	watchBatchBytes = 8 << 20 // well under the hub's 64 MiB request limit, even with managedFields
+	watchLinger     = 200 * time.Millisecond
 )
 
 // relist sends every object as a listed item, then tells the hub the list is complete

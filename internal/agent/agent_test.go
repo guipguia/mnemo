@@ -423,3 +423,23 @@ func TestWatchBatches(t *testing.T) {
 		t.Errorf("250 events took %d pushes, want batches (at most 4)", n)
 	}
 }
+
+// Events still pending when the watch fails or closes reach the hub first: after a 410 the
+// relist only shows the latest state, so a version not pushed by then would be lost.
+func TestWatchFlushesBeforeEnding(t *testing.T) {
+	h := newHarness(t)
+	h.lists <- list("100", cm("a", "90", "kubectl-create", map[string]any{"K": "0"}))
+	stop := h.run()
+	defer stop()
+	w := h.nextWatch("100")
+
+	w.Modify(cm("a", "101", "kubectl-patch", map[string]any{"K": "1"}))
+	h.lists <- list("200", cm("a", "150", "kubectl-edit", map[string]any{"K": "2"}))
+	w.Error(&metav1.Status{Status: metav1.StatusFailure, Code: 410, Reason: metav1.StatusReasonExpired}) // at once
+	w = h.nextWatch("200")
+	h.wantHistory("a", "modified:kubectl-edit", "modified:kubectl-patch", "baseline:kubectl-create")
+
+	w.Modify(cm("a", "201", "kubectl-patch", map[string]any{"K": "3"}))
+	w.Stop() // at once: the rewatch must start after the pending event
+	h.nextWatch("201")
+}
