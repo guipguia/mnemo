@@ -115,8 +115,8 @@ type otlpExporter struct {
 	client  *http.Client
 }
 
-func newOTLPExporter(url string, headers http.Header) *otlpExporter {
-	return &otlpExporter{url: url, headers: headers, client: &http.Client{Timeout: 10 * time.Second,
+func newOTLPExporter(endpoint string, headers http.Header) *otlpExporter {
+	return &otlpExporter{url: endpoint, headers: headers, client: &http.Client{Timeout: 10 * time.Second,
 		// On a 301-303 Go would resend as a GET without the spans, and count it as sent.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
