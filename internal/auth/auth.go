@@ -92,12 +92,12 @@ func (a *Auth) Mode() string { return a.cfg.Mode }
 type ctxKey struct{}
 
 // Require authenticates the request. Browsers without a session are sent to log in;
-// API calls get 401 so the UI can do the redirect itself.
+// API and MCP calls get 401: the UI does the redirect itself, and MCP clients can't follow one.
 func (a *Auth) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, err := a.authenticate(r)
 		if err != nil {
-			if a.cfg.Mode == "oidc" && !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/auth/me" {
+			if a.cfg.Mode == "oidc" && !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/auth/me" && r.URL.Path != "/mcp" {
 				http.Redirect(w, r, "/auth/login?rd="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 				return
 			}

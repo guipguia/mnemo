@@ -17,9 +17,11 @@ import (
 // caller's access, so a tool can never see more than the caller could through the API.
 func MCPHandler(s *store.Store, access func(*http.Request) store.Access, version string) http.Handler {
 	cache := mcp.NewSchemaCache()
-	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+	h := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		return newMCPServer(s, access(r), version, cache)
 	}, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+	// Login can be a cookie: refuse cross-origin browser requests outright.
+	return http.NewCrossOriginProtection().Handler(h)
 }
 
 const timeHelp = "RFC 3339 time (2026-10-20T14:32:00Z) or a duration ago (2h, 90m)"
@@ -38,9 +40,9 @@ type changesIn struct {
 
 type objectIn struct {
 	Cluster   string `json:"cluster" jsonschema:"cluster name"`
-	Group     string `json:"group" jsonschema:"API group: empty for core kinds (ConfigMap), apps for Deployment"`
+	Group     string `json:"group,omitempty" jsonschema:"API group: empty for core kinds (ConfigMap), apps for Deployment"`
 	Kind      string `json:"kind" jsonschema:"kind, e.g. Deployment"`
-	Namespace string `json:"namespace" jsonschema:"namespace; empty for cluster-scoped objects"`
+	Namespace string `json:"namespace,omitempty" jsonschema:"namespace; empty for cluster-scoped objects"`
 	Name      string `json:"name" jsonschema:"object name"`
 }
 
@@ -125,9 +127,13 @@ func newMCPServer(s *store.Store, a store.Access, version string, cache *mcp.Sch
 				t = time.Now()
 			}
 			r := in.ref()
+			missing := fmt.Errorf("no %s %s/%s in cluster %q at %s", r.Kind, r.Namespace, r.Name, r.Cluster, t.Format(time.RFC3339))
+			if !a.Allows(r.Cluster, r.Namespace) { // first, so errors can't tell hidden from missing
+				return nil, nil, missing
+			}
 			c, err := s.At(ctx, r, t)
-			if errors.Is(err, store.ErrNotFound) || (err == nil && !a.Allows(r.Cluster, r.Namespace)) {
-				return nil, nil, fmt.Errorf("no %s %s/%s in cluster %q at %s", r.Kind, r.Namespace, r.Name, r.Cluster, t.Format(time.RFC3339))
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, nil, missing
 			}
 			return nil, c, err
 		})

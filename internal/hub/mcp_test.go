@@ -66,7 +66,7 @@ func TestMCP(t *testing.T) {
 	if out, _ := call("list_changes", nil); strings.Contains(out, "hidden") || strings.Count(out, `"id"`) != 2 {
 		t.Errorf("list_changes must hide other namespaces: %s", out)
 	}
-	app := map[string]any{"cluster": "prod", "group": "", "kind": "ConfigMap", "namespace": "shop", "name": "app"}
+	app := map[string]any{"cluster": "prod", "kind": "ConfigMap", "namespace": "shop", "name": "app"} // no group: core
 	if out, _ := call("object_history", app); strings.Count(out, `"id"`) != 2 || !strings.Contains(out, "/data/timeout") {
 		t.Errorf("object_history: %s", out)
 	}
@@ -83,6 +83,13 @@ func TestMCP(t *testing.T) {
 	}
 	if out, isErr := call("list_changes", map[string]any{"since": "yesterday"}); !isErr || !strings.Contains(out, "RFC 3339") {
 		t.Errorf("bad time: %s", out)
+	}
+	// A browser on another site can't post to it, even with the user's cookie.
+	req, _ := http.NewRequest("POST", srv.URL, strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != http.StatusForbidden {
+		t.Errorf("cross-site POST: %v, %v", resp.Status, err)
 	}
 	if out, _ := call("list_clusters", nil); !strings.Contains(out, `"name":"prod"`) {
 		t.Errorf("list_clusters: %s", out)
