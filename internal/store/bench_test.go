@@ -15,7 +15,8 @@ import (
 //	go test ./internal/store -run '^$' -bench . -benchtime 2000x
 
 // object is a Deployment-sized object (~2.5 KB normalized) whose i-th version differs from
-// the previous in one field, as a typical edit does.
+// the previous in three fields (a revision annotation, the image tag, an env value), as a
+// typical rollout does.
 func object(name string, i int) []byte {
 	env := ""
 	for e := range 12 {
@@ -33,57 +34,61 @@ func object(name string, i int) []byte {
 		name, name, i, name, name, name, name, name, i, env, 30+i%5)
 }
 
-func benchStore(b *testing.B) *Store {
+// benchStore opens dsn (from testDSN: SQLite, or a fresh schema in $MNEMO_TEST_POSTGRES,
+// dropped afterwards).
+func benchStore(b *testing.B, dsn string) *Store {
 	b.Helper()
-	dsn := os.Getenv("MNEMO_TEST_POSTGRES")
-	if dsn == "" {
-		dsn = b.TempDir() + "/mnemo.db"
-	}
 	s, err := Open(dsn)
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { s.Close() })
-	if s.db.pg {
-		// A clean slate in the shared database: benchmarks don't use per-test schemas.
-		for _, tbl := range []string{"changes", "clusters", "events", "deploys", "webhook_cursors", "checkpoints"} {
-			if _, err := s.db.ExecContext(context.Background(), "TRUNCATE "+tbl); err != nil {
-				b.Fatal(err)
-			}
-		}
-	}
 	return s
 }
 
 // BenchmarkRecord is ingest: one modified version of one of 1000 objects per op, with the
 // diff against the previous version, in its own transaction, as the hub stores them.
 func BenchmarkRecord(b *testing.B) {
-	s := benchStore(b)
+	s := benchStore(b, testDSN(b))
 	ctx := context.Background()
 	t0 := time.Now()
-	i := 0
-	for b.Loop() {
+	record := func(i int) {
 		name := fmt.Sprint("api-", i%1000)
 		c := &Change{Ref: Ref{Cluster: "prod", Group: "apps", Kind: "Deployment", Namespace: "shop", Name: name},
 			Time: t0.Add(time.Duration(i) * time.Millisecond), Author: "argocd-controller", Source: "gitops", Object: object(name, i/1000)}
 		if _, err := s.Record(ctx, c, false, nil); err != nil {
 			b.Fatal(err)
 		}
+	}
+	for i := range 1000 { // first versions, outside the timing: every timed op is a modification
+		record(i)
+	}
+	i := 1000
+	for b.Loop() {
+		record(i)
 		i++
 	}
 	b.ReportMetric(float64(b.N)/b.Elapsed().Seconds(), "versions/s")
 }
 
 // loaded is a store holding n versions: 10 clusters × 20 namespaces × 50 objects, the rest
-// as further versions of the same objects, spread over the last 30 days.
-func loaded(b *testing.B) (*Store, int) {
-	n := 100_000
+// as further versions of the same objects, spread over the 30 days before end.
+// On PostgreSQL it loads without waiting for each commit to reach disk, which only speeds up
+// setup; the benchmarks then query through a normal connection.
+func loaded(b *testing.B) (s *Store, n int, end time.Time) {
+	n = 100_000
 	if v, err := strconv.Atoi(os.Getenv("MNEMO_BENCH_N")); err == nil {
 		n = v
 	}
-	s := benchStore(b)
+	dsn := testDSN(b)
+	s = benchStore(b, dsn)
+	loader := s
+	if IsPostgres(dsn) {
+		loader = benchStore(b, dsn+"&synchronous_commit=off")
+	}
 	ctx := context.Background()
-	start := time.Now().Add(-30 * 24 * time.Hour)
+	end = time.Now()
+	start := end.Add(-30 * 24 * time.Hour)
 	step := 30 * 24 * time.Hour / time.Duration(n)
 	for i := range n {
 		obj := i % 10_000
@@ -95,16 +100,16 @@ func loaded(b *testing.B) (*Store, int) {
 		}
 		c := &Change{Ref: r, Time: start.Add(time.Duration(i) * step), Author: "someone", Source: source, Drift: source == "manual",
 			Object: object(r.Name, i/10_000)}
-		if _, err := s.Record(ctx, c, false, nil); err != nil {
+		if _, err := loader.Record(ctx, c, false, nil); err != nil {
 			b.Fatal(err)
 		}
 	}
-	return s, n
+	return s, n, end
 }
 
 // BenchmarkQueries loads MNEMO_BENCH_N versions once, then times each read the UI and API make.
 func BenchmarkQueries(b *testing.B) {
-	s, n := loaded(b)
+	s, n, end := loaded(b)
 	ctx := context.Background()
 	size, _ := s.Size(ctx)
 	b.Logf("%d versions: database %.1f MB, %.0f bytes per version", n, float64(size)/1e6, float64(size)/float64(n))
@@ -117,17 +122,17 @@ func BenchmarkQueries(b *testing.B) {
 	}{
 		{"feed/latest-100", func() error { _, err := s.Changes(ctx, Filter{Access: all}); return err }},
 		{"feed/cluster-last-hour", func() error {
-			_, err := s.Changes(ctx, Filter{Access: all, Cluster: "cluster-4", Since: time.Now().Add(-time.Hour)})
+			_, err := s.Changes(ctx, Filter{Access: all, Cluster: "cluster-4", Since: end.Add(-time.Hour)})
 			return err
 		}},
 		{"feed/drift-only", func() error { _, err := s.Changes(ctx, Filter{Access: all, DriftOnly: true}); return err }},
 		{"feed/team-policy", func() error { _, err := s.Changes(ctx, Filter{Access: team}); return err }},
 		{"object/history", func() error { _, err := s.History(ctx, obj, 100); return err }},
-		{"object/at-time", func() error { _, err := s.At(ctx, obj, time.Now().Add(-15*24*time.Hour)); return err }},
+		{"object/at-time", func() error { _, err := s.At(ctx, obj, end.Add(-15*24*time.Hour)); return err }},
 	} {
 		b.Run(q.name, func(b *testing.B) {
 			for b.Loop() {
-				if err := q.f(); err != nil && err != ErrNotFound {
+				if err := q.f(); err != nil {
 					b.Fatal(err)
 				}
 			}
