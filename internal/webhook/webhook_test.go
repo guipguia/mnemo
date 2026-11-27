@@ -3,11 +3,14 @@ package webhook
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +28,8 @@ func TestLoad(t *testing.T) {
 		"duplicate": {"webhooks:\n- {name: a, url: \"https://x.example.com\"}\n- {name: a, url: \"https://y.example.com\"}\n", "unique"},
 		"no scheme": {"webhooks:\n- {name: a, url: x.example.com}\n", "url must be"},
 		"bad type":  {"webhooks:\n- {name: a, url: \"https://x.example.com\", match: {types: [baseline]}}\n", "type \"baseline\""},
+		"format":    {"webhooks:\n- {name: a, url: \"https://x.example.com\", format: splunk}\n", "format \"splunk\""},
+		"no token":  {"webhooks:\n- {name: a, url: \"https://x.example.com\", format: grafana}\n", "needs a token"},
 		"pattern":   {"webhooks:\n- {name: a, url: \"https://x.example.com\", match: {clusters: [\"p*d\"]}}\n", "pattern"},
 	} {
 		p := filepath.Join(t.TempDir(), "webhooks.yaml")
@@ -117,6 +122,60 @@ func TestDeliver(t *testing.T) {
 	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(got) == 4 }) // "rbac" and "slow"
 	if d := time.Since(start); d < 300*time.Millisecond {
 		t.Errorf("delayed webhook delivered after %v", d)
+	}
+}
+
+func TestDeliverGrafana(t *testing.T) {
+	var got annotation
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		json.NewDecoder(r.Body).Decode(&got)
+	}))
+	defer srv.Close()
+	t0 := time.Date(2026, 10, 20, 14, 0, 0, 0, time.UTC)
+	c := store.Change{Ref: store.Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: "shop", Name: "api"},
+		Time: t0, Type: store.Modified, Author: "<bob>", Source: "manual", Drift: true}
+	w := Webhook{URL: srv.URL, Format: formatGrafana, Token: "glsa"}
+	if !w.deliver(context.Background(), srv.Client(), "https://m.example.com", c, slog.Default()) {
+		t.Fatal("not delivered")
+	}
+	if auth != "Bearer glsa" || got.Time != t0.UnixMilli() {
+		t.Errorf("auth %q, time %d", auth, got.Time)
+	}
+	wantTags := []string{"mnemo", "cluster:prod", "kind:ConfigMap", "type:modified", "source:manual", "namespace:shop", "drift"}
+	if !slices.Equal(got.Tags, wantTags) {
+		t.Errorf("tags = %v", got.Tags)
+	}
+	// Grafana renders HTML: object data is escaped, and the link is a real one.
+	if !strings.Contains(got.Text, "by &lt;bob&gt;") || !strings.Contains(got.Text, `<a href="https://m.example.com/?change=0&amp;cluster=prod`) {
+		t.Errorf("text = %q", got.Text)
+	}
+
+	// Cluster-scoped: no namespace tag.
+	c = store.Change{Ref: store.Ref{Cluster: "prod", Kind: "ClusterRole", Name: "admin"}, Time: t0, Type: store.Added, Source: "gitops"}
+	w.deliver(context.Background(), srv.Client(), "", c, slog.Default())
+	if !slices.Equal(got.Tags, []string{"mnemo", "cluster:prod", "kind:ClusterRole", "type:added", "source:gitops"}) {
+		t.Errorf("cluster-scoped tags = %v", got.Tags)
+	}
+
+	// token without format: the mnemo payload, with the bearer token.
+	auth = ""
+	w = Webhook{URL: srv.URL, Token: "t0k"}
+	w.deliver(context.Background(), srv.Client(), "", c, slog.Default())
+	if auth != "Bearer t0k" {
+		t.Errorf("plain webhook auth = %q", auth)
+	}
+}
+
+func TestRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "invalid API key", http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	err := Webhook{URL: srv.URL}.post(context.Background(), srv.Client(), nil, 1)
+	if !errors.Is(err, errRejected) {
+		t.Errorf("401: err = %v, want errRejected", err)
 	}
 }
 

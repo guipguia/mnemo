@@ -234,8 +234,8 @@ Not to be confused with the inbound audit webhook used for attribution.
 
 Meet responders where they already are; the mnemo UI is not the only surface.
 
-- **Grafana:** annotations from the change feed (data source or annotation API), so changes
-  appear as markers on existing dashboards.
+- **Grafana:** an outbound webhook format posts to the annotations API, so changes appear as
+  markers on existing dashboards. See [webhooks.md](webhooks.md#grafana-annotations).
 - **Headlamp:** plugin showing the object timeline inside Headlamp (a CNCF project).
 - **MCP server / query API for AI agents:** "what changed before this alert?" as a tool call.
   Read-only, same RBAC rules as the UI.
