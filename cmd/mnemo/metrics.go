@@ -44,12 +44,12 @@ func metrics(st *store.Store, hooks *webhook.Config) http.Handler {
 		fmt.Fprintf(&b, "mnemo_ingest_failures_total %d\n", hub.IngestFailures.Load())
 		metric("mnemo_db_size_bytes", "gauge", "SQLite database size, excluding the WAL.")
 		fmt.Fprintf(&b, "mnemo_db_size_bytes %d\n", size)
-		metric("mnemo_cluster_last_seen_timestamp_seconds", "gauge", "When each cluster's agent last pushed or resumed.")
+		metric("mnemo_cluster_last_seen_timestamp_seconds", "gauge", "When each cluster's agent last checked in (changes or its one-minute heartbeat).")
 		for _, c := range clusters {
 			fmt.Fprintf(&b, "mnemo_cluster_last_seen_timestamp_seconds{cluster=%s} %d\n", quote(c.Name), c.LastSeen.Unix())
 		}
 		if hooks != nil && len(hooks.Webhooks) > 0 {
-			metric("mnemo_webhook_pending_changes", "gauge", "Changes recorded after the webhook's position, matching or not; growth means delivery is stuck.")
+			var pending, position strings.Builder
 			for _, h := range hooks.Webhooks {
 				cursor, ok, err := st.WebhookCursor(ctx, h.Name)
 				if err != nil {
@@ -57,9 +57,14 @@ func metrics(st *store.Store, hooks *webhook.Config) http.Handler {
 					return
 				}
 				if ok {
-					fmt.Fprintf(&b, "mnemo_webhook_pending_changes{webhook=%s} %d\n", quote(h.Name), last-cursor)
+					fmt.Fprintf(&pending, "mnemo_webhook_pending_changes{webhook=%s} %d\n", quote(h.Name), last-cursor)
+					fmt.Fprintf(&position, "mnemo_webhook_position{webhook=%s} %d\n", quote(h.Name), cursor)
 				}
 			}
+			metric("mnemo_webhook_pending_changes", "gauge", "Changes recorded after the webhook's position, matching or not.")
+			b.WriteString(pending.String())
+			metric("mnemo_webhook_position", "gauge", "ID of the last change the webhook has handled; it moves only when deliveries succeed.")
+			b.WriteString(position.String())
 		}
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 		w.Write([]byte(b.String()))

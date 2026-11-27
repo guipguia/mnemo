@@ -240,6 +240,7 @@ func Handler(s *store.Store, token string, access func(*http.Request) store.Acce
 		mux.Handle("POST /api/v1/ingest", RequireToken(token, func(w http.ResponseWriter, r *http.Request) {
 			var b Batch
 			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<20)).Decode(&b); err != nil {
+				IngestFailures.Add(1)
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}

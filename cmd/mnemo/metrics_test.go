@@ -37,6 +37,7 @@ func TestMetrics(t *testing.T) {
 		"mnemo_ingest_failures_total 1\n",
 		`mnemo_cluster_last_seen_timestamp_seconds{cluster="we\"ird"} `,
 		`mnemo_webhook_pending_changes{webhook="slack"} 1` + "\n",
+		`mnemo_webhook_position{webhook="slack"} 0` + "\n",
 		"# TYPE mnemo_db_size_bytes gauge\n",
 	} {
 		if !strings.Contains(out, want) {
