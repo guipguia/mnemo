@@ -78,6 +78,8 @@ func TestRoutes(t *testing.T) {
 		{"read API: no credentials", req{"GET", "/api/v1/changes", "", "", ""}, 401},
 		{"read API: the agent token can't read history", req{"GET", "/api/v1/changes", "agent-token", "", ""}, 401},
 		{"read API: logged-in user", req{"GET", "/api/v1/changes", "", "amy", "sre"}, 200},
+		{"MCP: no credentials", req{"POST", "/mcp", "", "", ""}, 401},
+		{"MCP: the agent token can't read history", req{"POST", "/mcp", "agent-token", "", ""}, 401},
 		{"read API: a trailing-slash variant still needs login", req{"GET", "/api/v1/checkpoints/", "agent-token", "", ""}, 401},
 
 		{"UI: no credentials", req{"GET", "/", "", "", ""}, 401},

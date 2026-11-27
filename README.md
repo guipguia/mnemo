@@ -36,6 +36,8 @@ can reconstruct any object at any point in time, not just get notified that it c
 - **Webhooks:** POST matching changes to Slack or your own receiver, signed, at least once
   and in order. Or draw them on Grafana dashboards as annotations. See
   [docs/webhooks.md](docs/webhooks.md).
+- **MCP server:** AI incident agents ask "what changed before this alert?" as tool calls,
+  under the same access policy. See [docs/mcp.md](docs/mcp.md).
 - **Multi-cluster:** one hub, one lightweight agent per cluster. Agents push, so the hub never
   needs credentials for your clusters.
 - **SSO and per-team access:** OIDC (Okta, Entra ID, Google, Keycloak, Dex, ...) or an auth

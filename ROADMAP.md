@@ -38,7 +38,7 @@ Design details: [docs/design.md](docs/design.md).
 - [ ] Agent ↔ hub mTLS
 - [x] Prometheus metrics ([docs/metrics.md](docs/metrics.md))
 - [ ] OpenTelemetry traces
-- [ ] MCP server for AI incident agents
+- [x] MCP server for AI incident agents ([docs/mcp.md](docs/mcp.md))
 - [ ] Headlamp plugin
 - [ ] Published scale and resource benchmarks
 

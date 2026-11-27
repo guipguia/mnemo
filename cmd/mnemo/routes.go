@@ -18,6 +18,7 @@ func routes(st *store.Store, token string, au *auth.Auth) http.Handler {
 	mux.Handle("/api/v1/ingest", api) // agents: hub token, not SSO
 	mux.Handle("/api/v1/checkpoints", api)
 	mux.Handle("/api/", au.Require(api))
+	mux.Handle("/mcp", au.Require(hub.MCPHandler(st, au.Access, version))) // AI agents: same login and policy as the API
 	mux.Handle("/auth/", au.Routes())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := st.Ping(r.Context()); err != nil {
