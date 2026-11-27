@@ -59,7 +59,7 @@ func newHarness(t *testing.T) *harness {
 		h.listN.Add(1)
 		select {
 		case l := <-h.lists:
-			if l.Object["error"] != nil { // a list the test wants to fail
+			if l.Object["error"] != nil { // failingList
 				return true, nil, l.Object["error"].(error)
 			}
 			return true, l, nil
@@ -358,9 +358,15 @@ func TestStopsWhenSuperseded(t *testing.T) {
 	h.wantHistory("a", "baseline:kubectl-create") // the refused change isn't stored
 }
 
+// failingList is a List call that fails with err (the reactor returns it as the error).
+func failingList(err error) *unstructured.UnstructuredList {
+	return &unstructured.UnstructuredList{Object: map[string]any{"error": err}}
+}
+
 // A relist in pages: every page's objects are recorded, and only objects in none of the
 // pages count as deleted, once the last page is in. A page whose snapshot was compacted
-// away (410) makes the relist read the resource whole instead of starting over in pages.
+// away (410) makes the relist read every page again, without waiting on the hub, at once:
+// no 5-second retry.
 func TestRelistPages(t *testing.T) {
 	h := newHarness(t)
 	h.lists <- list("100", cm("a", "90", "kubectl-create", nil), cm("gone", "91", "kubectl-create", nil))
@@ -373,21 +379,18 @@ func TestRelistPages(t *testing.T) {
 		l.SetContinue(cont)
 		return l
 	}
-	expired := &unstructured.UnstructuredList{Object: map[string]any{
-		"error": apierrors.NewResourceExpired("continue token expired")}}
-	h.lists <- page("200", "page-2", cm("a", "90", "kubectl-create", nil))
-	h.lists <- expired // page 2: too late
-	h.lists <- list("210", cm("a", "90", "kubectl-create", nil), cm("b", "190", "kubectl-create", nil))
+	h.lists <- page("200", "p2", cm("a", "90", "kubectl-create", nil))
+	h.lists <- failingList(apierrors.NewResourceExpired("continue token expired")) // page 2: too late
+	h.lists <- page("210", "q2", cm("a", "90", "kubectl-create", nil))
+	h.lists <- page("210", "", cm("b", "190", "kubectl-create", nil))
+	start := time.Now()
 	w.Error(&metav1.Status{Status: metav1.StatusFailure, Code: 410, Reason: metav1.StatusReasonExpired})
 	h.nextWatch("210")
+	if d := time.Since(start); d > 3*time.Second {
+		t.Errorf("relist took %v: it waited to retry instead of reading the pages again", d)
+	}
 	h.wantHistory("b", "baseline:kubectl-create")
 	h.wantHistory("a", "baseline:kubectl-create") // in the snapshot: never deleted
 	h.wantHistory("gone", "deleted:", "baseline:kubectl-create")
 	h.checkpoint("210")
-
-	// The fake client drops Limit and Continue from what it records, so the calls are
-	// counted: the first list, page 1, page 2 (expired), then the whole list.
-	if n := h.listN.Load(); n != 4 {
-		t.Errorf("%d List calls, want 4", n)
-	}
 }

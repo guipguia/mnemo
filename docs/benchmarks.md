@@ -79,10 +79,12 @@ local hub on SQLite. The objects are ConfigMaps of ~1.2 KB, 16 keys each.
   them (the hub compares versions). A relist reads 500 objects at a time and keeps only each
   object's name until the end, about 50 bytes each: before paging, the same initial sync
   peaked at 247 MB.
-- Pages are read at the hub's pace. If a relist outlasts the API server's snapshot (etcd
-  compacts every 5 minutes by default; at PostgreSQL's ~620 objects/s that is a few
-  hundred thousand objects in one resource), the agent reads the rest in one unpaged list,
-  as client-go's pager does, so the relist completes at the cost of that memory peak.
+- Pages are pushed at the hub's pace. If a relist outlasts the API server's snapshot (etcd
+  compacts every 5 minutes by default; at PostgreSQL's ~620 objects/s that is a couple of
+  hundred thousand objects in one resource, or a hub outage mid-relist), the agent reads
+  every page again first, holding them converted, and pushes them after. That holds about
+  2 KB per object for these ConfigMaps (more for larger objects): around 400 MB at 200,000,
+  so raise the agent's memory limit (512Mi by default) for resources that large.
 - **CPU follows the change rate:** a busy cluster's tens of changes per second cost a few
   percent of a core.
 - The hub used 36 MB at most through all of the above.

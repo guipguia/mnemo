@@ -197,25 +197,35 @@ func (a *Agent) consume(ctx context.Context, gvr schema.GroupVersionResource, w 
 
 // relist sends every object as a listed item, then tells the hub the list is complete
 // so it can record deletions that happened while nobody was watching.
+//
+// It reads in pages, pushed as they come: memory stays at a page, plus a name per object
+// for the Synced list. Pages all come from the first one's snapshot, which expires with
+// etcd compaction (5 minutes by default); pushing at the hub's pace, a large resource can
+// outlast it. Then it reads every page first, holding them converted (a few KB per object,
+// not the API objects), and pushes them after.
 func (a *Agent) relist(ctx context.Context, gvr schema.GroupVersionResource) (string, error) {
-	// In pages, pushed as they come: memory stays at a page (plus a name per object for the
-	// Synced list), not the whole resource. Every page is served from the first one's
-	// snapshot, so they share its resourceVersion.
+	rv, err := a.relistPages(ctx, gvr, false)
+	if errors.Is(err, errSnapshotExpired) {
+		slog.Warn("relist outlasted its snapshot; reading every page before pushing", "resource", key(gvr))
+		rv, err = a.relistPages(ctx, gvr, true)
+	}
+	return rv, err
+}
+
+var errSnapshotExpired = errors.New("list snapshot expired between pages")
+
+func (a *Agent) relistPages(ctx context.Context, gvr schema.GroupVersionResource, hold bool) (string, error) {
 	opts := metav1.ListOptions{Limit: listPage}
 	var rv, kind string
 	var keep []string
+	var held []hub.Batch
 	now := time.Now() // one time for the whole relist: when it started
 	for {
 		list, err := a.Client.Resource(gvr).List(ctx, opts)
-		if opts.Continue != "" && (apierrors.IsResourceExpired(err) || apierrors.IsGone(err)) {
-			// The snapshot was compacted away before the pages were read (they go at the
-			// hub's pace): paging again would hit the same limit, so read it whole, as
-			// client-go's pager does. Pages already pushed are only upserts.
-			slog.Warn("relist outlasted its snapshot; listing the rest unpaged", "resource", key(gvr), "pagesRead", len(keep)/listPage)
-			opts, rv, keep = metav1.ListOptions{}, "", nil
-			continue
-		}
 		if err != nil {
+			if opts.Continue != "" && (apierrors.IsResourceExpired(err) || apierrors.IsGone(err)) {
+				return "", errSnapshotExpired
+			}
 			return "", err
 		}
 		if rv == "" {
@@ -235,19 +245,34 @@ func (a *Agent) relist(ctx context.Context, gvr schema.GroupVersionResource) (st
 			b.Deploys = append(b.Deploys, toDeploys(gvr, &list.Items[i], now)...) // upserts: fine per page
 			keep = append(keep, it.Namespace+"/"+it.Name)
 		}
-		if opts.Continue = list.GetContinue(); opts.Continue == "" {
-			// The last page also says the relist is complete.
+		opts.Continue = list.GetContinue()
+		last := opts.Continue == ""
+		if last { // the last page also says the relist is complete
 			b.Checkpoints = map[string]string{key(gvr): rv}
 			if gvr != eventsGVR { // Events are archived, not mirrored: no Synced, so expired ones stay in the hub
 				b.Synced = []hub.Synced{{Group: gvr.Group, Kind: kind, Keep: keep, Time: now}}
 			}
-			return rv, a.push(ctx, key(gvr), b)
 		}
-		if len(b.Items)+len(b.Events) == 0 {
-			continue // a page can come back empty (filtered); nothing to push
+		if hold {
+			held = append(held, b)
+		} else {
+			held = []hub.Batch{b}
 		}
-		if err := a.push(ctx, key(gvr), b); err != nil {
-			return "", err
+		if hold && !last {
+			continue
+		}
+		for i, hb := range held {
+			if i < len(held)-1 || !last {
+				if len(hb.Items)+len(hb.Events) == 0 {
+					continue // a page can come back empty (filtered): nothing to push
+				}
+			}
+			if err := a.push(ctx, key(gvr), hb); err != nil {
+				return "", err
+			}
+		}
+		if last {
+			return rv, nil
 		}
 	}
 }
