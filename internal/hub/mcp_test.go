@@ -88,8 +88,10 @@ func TestMCP(t *testing.T) {
 	req, _ := http.NewRequest("POST", srv.URL, strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
-	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != http.StatusForbidden {
-		t.Errorf("cross-site POST: %v, %v", resp.Status, err)
+	if resp, err := http.DefaultClient.Do(req); err != nil {
+		t.Error(err)
+	} else if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("cross-site POST: %s, want 403", resp.Status)
 	}
 	if out, _ := call("list_clusters", nil); !strings.Contains(out, `"name":"prod"`) {
 		t.Errorf("list_clusters: %s", out)
