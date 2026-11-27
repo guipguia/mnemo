@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -46,8 +47,14 @@ func TestRBAC(t *testing.T) {
 	record("ClusterRoleBinding", "", "gone", "") // deleted: grants nothing
 	record("ClusterRoleBinding", "", "bad", `{"roleRef":{"kind":"Role","name":"apps"},"subjects":[{"kind":"User","name":"oidc:alice"}]}`)
 
+	record("ClusterRoleBinding", "", "cluster-admin", `{"roleRef":{"kind":"ClusterRole","name":"nodes"},"subjects":[{"kind":"Group","name":"system:masters"}]}`)
+	for i := range 300 { // many bindings of one role: merged into one scope, or the SQL overflows
+		record("RoleBinding", fmt.Sprint("ns-", i), "team-view", `{"roleRef":{"kind":"ClusterRole","name":"view"},"subjects":[{"kind":"Group","name":"oidc:team-shop"},{"kind":"User","name":"oidc:bob"}]}`)
+	}
+
 	p := writePolicy(t, "rbac:\n  userPrefix: 'oidc:'\n  groupPrefix: 'oidc:'\n")
 	p.RBAC.store = st
+	p.RBAC.reload()
 	cm := func(ns string) store.Ref {
 		return store.Ref{Cluster: "prod", Kind: "ConfigMap", Namespace: ns, Name: "a"}
 	}
@@ -72,6 +79,7 @@ func TestRBAC(t *testing.T) {
 		{"deleted binding", User{"mallory", nil}, cm("shop"), false},
 		{"prefix is required", User{"oidc:alice", nil}, deploy, false},
 		{"unbound user", User{"zed", []string{"everyone"}}, cm("shop"), false},
+		{"many bindings", team, cm("ns-299"), true},
 	} {
 		if got := p.Access(tc.u).Allows(tc.r); got != tc.want {
 			t.Errorf("%s: %v reading %v = %v, want %v", tc.name, tc.u, tc.r, got, tc.want)
@@ -88,6 +96,23 @@ func TestRBAC(t *testing.T) {
 	feed, err := st.Changes(ctx, store.Filter{Access: p.Access(team), Kind: "ConfigMap"})
 	if err != nil || len(feed) != 1 || feed[0].Namespace != "shop" {
 		t.Errorf("feed for %v = %v, %v; want the shop ConfigMap only", team, feed, err)
+	}
+
+	if n := len(p.Access(team).Scopes); n != 1 {
+		t.Errorf("%v has %d scopes, want 1 (the bindings merged)", team, n)
+	}
+
+	// Kubernetes reserves system: names; without a prefix, an IdP must not be able to claim them.
+	bare := writePolicy(t, "rbac: {}\n")
+	bare.RBAC.store = st
+	bare.RBAC.reload()
+	for _, u := range []User{{"x", []string{"system:masters"}}, {"system:admin", nil}} {
+		if a := bare.Access(u); len(a.Scopes) > 0 {
+			t.Errorf("%v gets %v, want nothing", u, a.Scopes)
+		}
+	}
+	if got := bare.relevant([]string{"system:masters"}); len(got) > 0 {
+		t.Errorf("relevant kept %v", got)
 	}
 
 	if got := p.relevant([]string{"team-shop", "ops", "unrelated"}); len(got) != 2 {

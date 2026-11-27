@@ -62,6 +62,7 @@ func New(ctx context.Context, cfg Config) (*Auth, error) {
 			return nil, errors.New("the policy's rbac mode needs the hub's database")
 		}
 		cfg.Policy.RBAC.store = cfg.Store
+		cfg.Policy.RBAC.reload() // first snapshot before serving; then in the background
 	}
 	switch cfg.Mode {
 	case "none":

@@ -614,10 +614,12 @@ func (s *Store) Current(ctx context.Context, cluster, group string, kinds ...str
 	for _, k := range kinds {
 		args = append(args, k)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+cols+`, object FROM (
-			SELECT *, ROW_NUMBER() OVER (PARTITION BY kind, namespace, name ORDER BY id DESC) AS n
-			FROM changes WHERE cluster = ? AND api_group = ? AND kind IN (?`+strings.Repeat(", ?", len(kinds)-1)+`)) AS latest
-		WHERE n = 1 AND type != ?`, append(args, string(Deleted))...)
+	// Rank IDs only, then read just the newest rows' objects.
+	rows, err := s.db.QueryContext(ctx, `SELECT `+cols+`, object FROM changes WHERE id IN (
+			SELECT id FROM (
+				SELECT id, type, ROW_NUMBER() OVER (PARTITION BY kind, namespace, name ORDER BY id DESC) AS n
+				FROM changes WHERE cluster = ? AND api_group = ? AND kind IN (?`+strings.Repeat(", ?", len(kinds)-1)+`)) AS ranked
+			WHERE n = 1 AND type != ?)`, append(args, string(Deleted))...)
 	if err != nil {
 		return nil, err
 	}
