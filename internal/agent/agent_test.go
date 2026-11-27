@@ -353,3 +353,24 @@ func TestStopsWhenSuperseded(t *testing.T) {
 	}
 	h.wantHistory("a", "baseline:kubectl-create") // the refused change isn't stored
 }
+
+// A relist in pages: every page's objects are recorded, and only objects in none of the
+// pages count as deleted, once the last page is in.
+func TestRelistPages(t *testing.T) {
+	h := newHarness(t)
+	h.lists <- list("100", cm("a", "90", "kubectl-create", nil), cm("gone", "91", "kubectl-create", nil))
+	stop := h.run()
+	w := h.nextWatch("100")
+
+	page1 := list("200", cm("a", "90", "kubectl-create", nil))
+	page1.SetContinue("page-2")
+	h.lists <- page1
+	h.lists <- list("200", cm("b", "190", "kubectl-create", nil))
+	w.Error(&metav1.Status{Status: metav1.StatusFailure, Code: 410, Reason: metav1.StatusReasonExpired})
+	h.nextWatch("200")
+	h.wantHistory("b", "baseline:kubectl-create")
+	h.wantHistory("a", "baseline:kubectl-create") // on page 1: not deleted
+	h.wantHistory("gone", "deleted:", "baseline:kubectl-create")
+	h.checkpoint("200")
+	stop()
+}

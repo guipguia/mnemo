@@ -198,53 +198,52 @@ func (a *Agent) consume(ctx context.Context, gvr schema.GroupVersionResource, w 
 // relist sends every object as a listed item, then tells the hub the list is complete
 // so it can record deletions that happened while nobody was watching.
 func (a *Agent) relist(ctx context.Context, gvr schema.GroupVersionResource) (string, error) {
-	// ponytail: one unpaged list; switch to a pager for resources with tens of thousands of objects.
-	list, err := a.Client.Resource(gvr).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return "", err
-	}
-	rv := list.GetResourceVersion()
-	if gvr == eventsGVR {
-		// Archived, not mirrored: no Synced, so expired events stay in the hub.
-		evs := make([]store.Event, 0, len(list.Items))
-		for i := range list.Items {
-			evs = append(evs, toEvent(&list.Items[i]))
+	// In pages, pushed as they come: memory stays at a page, not the whole resource. Every
+	// page is served from the first one's snapshot, so they share its resourceVersion.
+	opts := metav1.ListOptions{Limit: listPage}
+	var rv, kind string
+	var keep []string
+	var deploys []store.Deploy
+	now := time.Now()
+	for {
+		list, err := a.Client.Resource(gvr).List(ctx, opts)
+		if err != nil {
+			return "", err // an expired continue token (410) included: the caller relists from scratch
 		}
-		for len(evs) > 500 {
-			if err := a.push(ctx, key(gvr), hub.Batch{Events: evs[:500]}); err != nil {
+		if rv == "" {
+			rv, kind = list.GetResourceVersion(), strings.TrimSuffix(list.GetKind(), "List")
+		}
+		var b hub.Batch
+		for i := range list.Items {
+			if gvr == eventsGVR {
+				b.Events = append(b.Events, toEvent(&list.Items[i]))
+				continue
+			}
+			it, err := toItem(&list.Items[i], true, false, now)
+			if err != nil {
 				return "", err
 			}
-			evs = evs[500:]
+			b.Items = append(b.Items, it)
+			deploys = append(deploys, toDeploys(gvr, &list.Items[i], now)...)
+			keep = append(keep, it.Namespace+"/"+it.Name)
 		}
-		return rv, a.push(ctx, key(gvr), hub.Batch{Events: evs, Checkpoints: map[string]string{key(gvr): rv}})
-	}
-	now := time.Now()
-	items := make([]hub.Item, 0, len(list.Items))
-	keep := make([]string, 0, len(list.Items))
-	var deploys []store.Deploy
-	for i := range list.Items {
-		it, err := toItem(&list.Items[i], true, false, now)
-		if err != nil {
+		if opts.Continue = list.GetContinue(); opts.Continue == "" {
+			// The last page also says the relist is complete.
+			b.Checkpoints = map[string]string{key(gvr): rv}
+			if gvr != eventsGVR { // Events are archived, not mirrored: no Synced, so expired ones stay in the hub
+				b.Deploys = deploys
+				b.Synced = []hub.Synced{{Group: gvr.Group, Kind: kind, Keep: keep, Time: now}}
+			}
+			return rv, a.push(ctx, key(gvr), b)
+		}
+		if err := a.push(ctx, key(gvr), b); err != nil {
 			return "", err
 		}
-		items = append(items, it)
-		deploys = append(deploys, toDeploys(gvr, &list.Items[i], now)...)
-		keep = append(keep, it.Namespace+"/"+it.Name)
 	}
-	for len(items) > 500 {
-		if err := a.push(ctx, key(gvr), hub.Batch{Items: items[:500]}); err != nil {
-			return "", err
-		}
-		items = items[500:]
-	}
-	err = a.push(ctx, key(gvr), hub.Batch{
-		Items:       items,
-		Deploys:     deploys,
-		Synced:      []hub.Synced{{Group: gvr.Group, Kind: strings.TrimSuffix(list.GetKind(), "List"), Keep: keep, Time: now}},
-		Checkpoints: map[string]string{key(gvr): rv},
-	})
-	return rv, err
 }
+
+// listPage is how many objects a relist reads, converts and pushes at a time.
+const listPage = 500
 
 // heartbeat pushes an empty batch every minute, so the hub's last-seen time (and the
 // mnemo_cluster_last_seen_timestamp_seconds metric) tells a quiet cluster from a dead agent.
